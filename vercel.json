@@ -1,28 +1,17 @@
 {
-  "version": 2,
-  "name": "financeaudit-analytics-nextjs",
-  "builds": [
-    {
-      "src": "package.json",
-      "use": "@vercel/next"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "/$1"
-    }
-  ],
-  "env": {
-    "POSTGRES_URL": "@postgres_url",
-    "DB_SCHEMA": "analytics",
-    "PGSSL": "false",
-    "DEFAULT_LIMIT": "50",
-    "AUTH_SECRET": "@auth_secret",
-    "AUTH_USERS_JSON": "@auth_users_json"
-  }
+    "version": 2,
+    "name": "financeaudit-analytics-nextjs",
+    "builds": [{
+        "src": "package.json",
+        "use": "@vercel/next"
+    }],
+    "routes": [{
+            "src": "/api/(.*)",
+            "dest": "/api/$1"
+        },
+        {
+            "src": "/(.*)",
+            "dest": "/$1"
+        }
+    ]
 }
