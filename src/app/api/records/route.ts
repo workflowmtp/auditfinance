@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
     console.log('Params:', params);
 
     const res = await query(sql, params);
-    const rows = (res.rows as Record<string, unknown>[]).map((row) => ({ ...row, _audit: analyzeRecord(row) }));
+    const rows = (res.rows as Record<string, unknown>[]).map((row) => ({ ...row, _audit: analyzeRecord(row, moduleId) }));
     return NextResponse.json({
       module: moduleId,
       table: config.table,

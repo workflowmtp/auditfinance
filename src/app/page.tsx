@@ -3,7 +3,15 @@
 import { useEffect, useMemo, useState } from 'react';
 import { MODULES, NAV_ITEMS, type AuditModuleId } from '@/lib/modules';
 
-type Audit = { status: string; risk: string; score: number; reasons: string[] };
+type AnomalyDetail = {
+  type: string;
+  severity: 'critique' | 'majeur' | 'mineur';
+  message: string;
+  field?: string;
+  suggestion: string;
+};
+
+type Audit = { status: string; risk: string; score: number; reasons: string[]; anomalies?: AnomalyDetail[] };
 type Row = Record<string, unknown> & { _audit?: Audit };
 type RecordsPayload = { module: string; table: string; columns: string[]; rows: Row[]; pagination?: { page: number; limit: number; total: number; totalPages: number; offset: number }; error?: string; warning?: string };
 type DashboardPayload = { schemas: string[]; schema: string; tables: number; columns: number; totalRows: number; moduleStats: { id: string; title: string; table: string; total: number }[]; error?: string; connectionFailed?: boolean; message?: string };
@@ -259,7 +267,38 @@ export default function HomePage() {
 
         {!loading && (
           <>
-            <div className="table-wrap"><table><thead><tr>{records?.columns?.map((c) => <th key={c}>{c}</th>)}<th>Statut analyse</th><th>Action</th></tr></thead><tbody>{currentRows?.map((r, idx) => <tr key={idx}>{records?.columns?.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}<td>{r._audit ? badge(r._audit.status, r._audit.status) : null}<div className="small">Score {r._audit?.score ?? 0} / {r._audit?.risk}</div></td><td><button className="btn btn-secondary btn-mini" onClick={() => setModalRow(r)}>Détail</button></td></tr>)}</tbody></table></div>
+            <div className="table-wrap"><table><thead><tr>{records?.columns?.map((c) => <th key={c}>{c}</th>)}<th>Statut analyse</th><th>Action</th></tr></thead><tbody>{currentRows?.map((r, idx) => <tr key={idx}>{records?.columns?.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}<td style={{ minWidth: 250 }}>
+              {r._audit ? (
+                <>
+                  <div style={{ marginBottom: 8 }}>{badge(r._audit.status, r._audit.status)} <span className="small" style={{ marginLeft: 8 }}>Score: {r._audit.score}/100</span></div>
+                  {r._audit.anomalies && r._audit.anomalies.length > 0 ? (
+                    <div style={{ fontSize: 12, lineHeight: 1.4 }}>
+                      {r._audit.anomalies.slice(0, 2).map((a, i) => (
+                        <div key={i} style={{ 
+                          padding: '4px 8px', 
+                          marginBottom: 4, 
+                          borderRadius: 4, 
+                          background: a.severity === 'critique' ? '#fee2e2' : a.severity === 'majeur' ? '#fef3c7' : '#e0f2fe',
+                          borderLeft: `3px solid ${a.severity === 'critique' ? '#dc2626' : a.severity === 'majeur' ? '#d97706' : '#0284c7'}`
+                        }}>
+                          <b style={{ color: a.severity === 'critique' ? '#991b1b' : a.severity === 'majeur' ? '#92400e' : '#0369a1' }}>
+                            {a.severity.toUpperCase()}:
+                          </b> {a.message}
+                          <div style={{ color: '#6b7280', marginTop: 2, fontSize: 11 }}>💡 {a.suggestion}</div>
+                        </div>
+                      ))}
+                      {r._audit.anomalies.length > 2 && (
+                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 4 }}>
+                          + {r._audit.anomalies.length - 2} autre(s) anomalie(s)...
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="small" style={{ color: '#15803d' }}>✓ Document conforme</div>
+                  )}
+                </>
+              ) : null}
+            </td><td><button className="btn btn-secondary btn-mini" onClick={() => setModalRow(r)}>Détail</button></td></tr>)}</tbody></table></div>
 
             {/* Pagination Controls */}
             {pagination && pagination.totalPages > 1 && (
@@ -318,7 +357,64 @@ function Settings() {
 }
 
 function RecordModal({ row, onClose }: { row: Row; onClose: () => void }) {
-  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Détail enregistrement</h3><p className="small">Statut calculé : {row._audit?.status} / score {row._audit?.score}</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div><div className="card"><h4>Analyse automatique</h4>{row._audit && badge(row._audit.status, row._audit.status)}<p className="small" style={{ marginTop: 10 }}>{row._audit?.reasons?.join(' | ')}</p></div><div className="grid grid-3" style={{ marginTop: 16 }}>{Object.entries(row).filter(([k]) => !k.startsWith('_')).map(([k, v]) => <div className="card" key={k}><b>{k}</b><p className="small">{String(v ?? '')}</p></div>)}</div></div></div>;
+  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Détail enregistrement</h3><p className="small">Statut calculé : {row._audit?.status} / score {row._audit?.score}/100</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div>
+    
+    {/* Section Anomalies */}
+    <div className="card" style={{ marginBottom: 16 }}>
+      <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>🔍 Analyse de conformité</h4>
+      {row._audit ? (
+        <>
+          <div style={{ marginBottom: 12 }}>
+            {badge(row._audit.status, row._audit.status)}
+            <span style={{ marginLeft: 12, fontWeight: 600, color: row._audit.risk === 'critique' ? '#dc2626' : row._audit.risk === 'moyen' ? '#d97706' : '#15803d' }}>
+              Risque: {row._audit.risk}
+            </span>
+            <span className="small" style={{ marginLeft: 12 }}>Score: {row._audit.score}/100</span>
+          </div>
+          
+          {row._audit.anomalies && row._audit.anomalies.length > 0 ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {row._audit.anomalies.map((a, i) => (
+                <div key={i} style={{
+                  padding: '12px',
+                  borderRadius: 8,
+                  background: a.severity === 'critique' ? '#fee2e2' : a.severity === 'majeur' ? '#fef3c7' : '#e0f2fe',
+                  borderLeft: `4px solid ${a.severity === 'critique' ? '#dc2626' : a.severity === 'majeur' ? '#d97706' : '#0284c7'}`
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ 
+                      padding: '2px 8px', 
+                      borderRadius: 4, 
+                      fontSize: 11, 
+                      fontWeight: 600,
+                      background: a.severity === 'critique' ? '#fecaca' : a.severity === 'majeur' ? '#fde68a' : '#bae6fd',
+                      color: a.severity === 'critique' ? '#991b1b' : a.severity === 'majeur' ? '#92400e' : '#0369a1'
+                    }}>
+                      {a.severity.toUpperCase()}
+                    </span>
+                    <span style={{ fontSize: 12, color: '#6b7280' }}>{a.type}</span>
+                    {a.field && <span style={{ fontSize: 11, color: '#9ca3af' }}>Champ: {a.field}</span>}
+                  </div>
+                  <p style={{ margin: '4px 0', fontWeight: 500 }}>{a.message}</p>
+                  <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>💡 <b>Action suggérée:</b> {a.suggestion}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 8, color: '#15803d' }}>
+              ✓ Aucune anomalie détectée - Ce document est conforme aux règles de contrôle.
+            </div>
+          )}
+        </>
+      ) : (
+        <p className="small">Pas d'analyse disponible</p>
+      )}
+    </div>
+    
+    {/* Données brutes */}
+    <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>📋 Données de l'enregistrement</h4>
+    <div className="grid grid-3">{Object.entries(row).filter(([k]) => !k.startsWith('_')).map(([k, v]) => <div className="card" key={k}><b>{k}</b><p className="small">{String(v ?? '')}</p></div>)}</div>
+  </div></div>;
 }
 
 function AnomalyModal({ anomaly, onClose }: { anomaly: Anomaly; onClose: () => void }) {
