@@ -17,18 +17,25 @@ type RecordsPayload = { module: string; table: string; columns: string[]; rows: 
 type DashboardPayload = { schemas: string[]; schema: string; tables: number; columns: number; totalRows: number; moduleStats: { id: string; title: string; table: string; total: number }[]; error?: string; connectionFailed?: boolean; message?: string };
 
 type Anomaly = {
-  id: string;
+  id: number;
+  anomalyId: string;
   module: string;
-  table: string;
-  type: string;
+  moduleName: string | null;
+  sourceSchema: string | null;
+  sourceTable: string | null;
+  anomalyType: string;
+  title: string;
   description: string;
-  amount: number;
-  reference: string;
-  risk: string;
-  status: 'ouverte' | 'en cours' | 'justifiée' | 'clôturée';
-  justificationStatus: string;
-  recommendation: string;
-  history: { date: string; user: string; action: string; detail: string }[];
+  severity: 'critique' | 'majeur' | 'mineur';
+  amount: number | null;
+  referenceNumber: string | null;
+  status: 'ouverte' | 'en_cours' | 'justifiee' | 'cloturee' | 'rejetee';
+  justificationStatus: 'sans_justificatif' | 'demandee' | 'recue' | 'validee' | 'rejetee';
+  suggestion: string | null;
+  detectedAt: string;
+  assignedTo: number | null;
+  assignedUserName?: string | null;
+  dueDate: string | null;
 };
 
 const connectedModules = MODULES.filter((m) => m.table);
@@ -40,7 +47,11 @@ function formatAmount(v: unknown) {
 }
 
 function badge(label: string, type: string) {
-  const cls = type === 'critique' || type === 'Anomalie' || type === 'ouverte' ? 'danger' : type === 'moyen' || type === 'À vérifier' || type === 'À surveiller' || type === 'en cours' ? 'warning' : type === 'faible' || type === 'Conforme' || type === 'clôturée' ? 'success' : 'info';
+  const cls = 
+    type === 'critique' || type === 'Anomalie' || type === 'ouverte' || type === 'sans_justificatif' || type === 'demandee' || type === 'rejetee' ? 'danger' : 
+    type === 'moyen' || type === 'À vérifier' || type === 'À surveiller' || type === 'en cours' || type === 'en_cours' || type === 'mineur' ? 'warning' : 
+    type === 'faible' || type === 'Conforme' || type === 'clôturée' || type === 'cloturee' || type === 'justifiée' || type === 'justifiee' || type === 'validee' ? 'success' : 
+    'info';
   return <span className={`badge badge-${cls}`}>{label}</span>;
 }
 
@@ -79,6 +90,14 @@ export default function HomePage() {
   const [loading, setLoading] = useState(false);
   const [modalRow, setModalRow] = useState<Row | null>(null);
   const [anomalyModal, setAnomalyModal] = useState<Anomaly | null>(null);
+  
+  // Anomalies from database
+  const [dbAnomalies, setDbAnomalies] = useState<Anomaly[]>([]);
+  const [anomaliesLoading, setAnomaliesLoading] = useState(false);
+  const [anomaliesError, setAnomaliesError] = useState('');
+  const [anomalyFilter, setAnomalyFilter] = useState({ status: '', severity: '' });
+  const [anomalyPagination, setAnomalyPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [selectedAnomaly, setSelectedAnomaly] = useState<Anomaly | null>(null);
 
   const activeModule = connectedModules.find((m) => m.id === active);
 
@@ -94,6 +113,37 @@ export default function HomePage() {
     const res = await fetch(`/api/dashboard?${p.toString()}`);
     const data = await res.json();
     setDashboard(data);
+  }
+
+  async function loadAnomalies(page = 1) {
+    setAnomaliesLoading(true);
+    setAnomaliesError('');
+    try {
+      const params = new URLSearchParams();
+      if (anomalyFilter.status) params.set('status', anomalyFilter.status);
+      if (anomalyFilter.severity) params.set('severity', anomalyFilter.severity);
+      params.set('limit', anomalyPagination.limit.toString());
+      params.set('offset', ((page - 1) * anomalyPagination.limit).toString());
+      
+      const res = await fetch(`/api/anomalies?${params.toString()}`);
+      const data = await res.json();
+      
+      if (data.success) {
+        setDbAnomalies(data.data);
+        setAnomalyPagination(prev => ({
+          ...prev,
+          page,
+          total: data.pagination.total,
+          totalPages: data.pagination.totalPages
+        }));
+      } else {
+        setAnomaliesError(data.error || 'Erreur lors du chargement');
+      }
+    } catch (e) {
+      setAnomaliesError('Erreur réseau');
+    } finally {
+      setAnomaliesLoading(false);
+    }
   }
 
   async function loadRecords(moduleId = active) {
@@ -131,6 +181,12 @@ export default function HomePage() {
     if (activeModule) loadRecords(active);
   }, [active, periodParams, currentPage, pageSize, colFilters]);
 
+  useEffect(() => {
+    if (active === 'anomalies') {
+      loadAnomalies(1);
+    }
+  }, [active, anomalyFilter]);
+
   const filteredRows = useMemo(() => {
     const rows = records?.rows || [];
     return rows.filter((r) => {
@@ -140,28 +196,6 @@ export default function HomePage() {
       return true;
     });
   }, [records, statusFilter, riskFilter]);
-
-  const anomalies = useMemo<Anomaly[]>(() => {
-    const rows = records?.rows || [];
-    const moduleTitle = activeModule?.title || 'Module';
-    const table = records?.table || '';
-    return rows
-      .filter((r) => r._audit && r._audit.status !== 'Conforme')
-      .map((r, i) => ({
-        id: `ANOM-${String(i + 1).padStart(5, '0')}`,
-        module: moduleTitle,
-        table,
-        type: r._audit?.status || 'À vérifier',
-        description: r._audit?.reasons?.[0] || 'Point à contrôler',
-        amount: bestAmount(r),
-        reference: bestReference(r),
-        risk: r._audit?.risk || 'faible',
-        status: 'ouverte',
-        justificationStatus: 'sans justificatif',
-        recommendation: 'Contrôler la pièce, la validation hiérarchique et la cohérence de l’opération.',
-        history: []
-      }));
-  }, [records, activeModule]);
 
   const dashboardStats = useMemo(() => {
     const rows = records?.rows || [];
@@ -319,9 +353,188 @@ export default function HomePage() {
   function renderAnomalies() {
     return (
       <>
-        <div className="page-header"><div><h3>Centre des anomalies</h3><p>Présentation avec demande de justificatif, traitement et historique.</p></div></div>
-        <div className="toolbar"><span className="schema-pill">{anomalies.length} anomalies issues de la rubrique courante</span></div>
-        <div className="table-wrap"><table><thead><tr><th>Risque</th><th>Module</th><th>Description</th><th>Montant</th><th>Référence</th><th>Justificatif</th><th>Recommandation</th><th>Statut / Actions</th></tr></thead><tbody>{anomalies.map((a) => <tr key={a.id}><td>{badge(a.risk[0].toUpperCase() + a.risk.slice(1), a.risk)}</td><td>{a.module}</td><td><b>{a.type}</b><div className="small">{a.description}</div></td><td>{formatAmount(a.amount)}</td><td>{a.reference}</td><td>{badge(a.justificationStatus, 'neutral')}</td><td>{a.recommendation}</td><td><div className="action-stack">{badge(a.status, a.status)}<button className="btn btn-primary btn-mini" onClick={() => setAnomalyModal(a)}>Traiter</button><button className="btn btn-secondary btn-mini" onClick={() => setAnomalyModal({ ...a, status: 'en cours', justificationStatus: 'demandée' })}>Demander justificatif</button><button className="btn btn-warning btn-mini" onClick={() => setAnomalyModal(a)}>Joindre / voir</button></div></td></tr>)}</tbody></table></div>
+        <div className="page-header">
+          <div>
+            <h3>Centre des anomalies</h3>
+            <p>Gestion des anomalies détectées dans la base de données.</p>
+          </div>
+        </div>
+        
+        {/* Stats cards */}
+        <div className="grid grid-4" style={{ marginBottom: 16 }}>
+          <div className="card">
+            <b style={{ fontSize: 24, color: 'var(--primary)' }}>{anomalyPagination.total}</b>
+            <p className="small">Total anomalies</p>
+          </div>
+          <div className="card">
+            <b style={{ fontSize: 24, color: '#dc2626' }}>{dbAnomalies.filter(a => a.severity === 'critique').length}</b>
+            <p className="small">Critiques</p>
+          </div>
+          <div className="card">
+            <b style={{ fontSize: 24, color: '#d97706' }}>{dbAnomalies.filter(a => a.severity === 'majeur').length}</b>
+            <p className="small">Majeures</p>
+          </div>
+          <div className="card">
+            <b style={{ fontSize: 24, color: '#15803d' }}>{dbAnomalies.filter(a => a.status === 'ouverte').length}</b>
+            <p className="small">À traiter</p>
+          </div>
+        </div>
+        
+        {/* Filters */}
+        <div className="toolbar" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <select 
+            value={anomalyFilter.status} 
+            onChange={(e) => setAnomalyFilter(f => ({ ...f, status: e.target.value }))}
+            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }}
+          >
+            <option value="">Tous les statuts</option>
+            <option value="ouverte">🔴 Ouverte</option>
+            <option value="en_cours">🟡 En cours</option>
+            <option value="justifiee">🟢 Justifiée</option>
+            <option value="cloturee">✅ Clôturée</option>
+          </select>
+          
+          <select 
+            value={anomalyFilter.severity} 
+            onChange={(e) => setAnomalyFilter(f => ({ ...f, severity: e.target.value }))}
+            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }}
+          >
+            <option value="">Toutes les sévérités</option>
+            <option value="critique">🔴 Critique</option>
+            <option value="majeur">🟡 Majeur</option>
+            <option value="mineur">🔵 Mineur</option>
+          </select>
+          
+          <select
+            value={anomalyPagination.limit}
+            onChange={(e) => setAnomalyPagination(p => ({ ...p, limit: parseInt(e.target.value) }))}
+            style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }}
+          >
+            <option value="10">10 par page</option>
+            <option value="25">25 par page</option>
+            <option value="50">50 par page</option>
+            <option value="100">100 par page</option>
+          </select>
+          
+          <button 
+            className="btn btn-primary" 
+            onClick={() => loadAnomalies(1)}
+            disabled={anomaliesLoading}
+          >
+            {anomaliesLoading ? 'Chargement...' : '↻ Actualiser'}
+          </button>
+        </div>
+        
+        {anomaliesError && <div className="error" style={{ marginBottom: 16 }}>{anomaliesError}</div>}
+        
+        {anomaliesLoading ? (
+          <div className="card empty-state">Chargement des anomalies...</div>
+        ) : dbAnomalies.length === 0 ? (
+          <div className="card empty-state">Aucune anomalie trouvée dans la base de données.</div>
+        ) : (
+          <>
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th style={{ width: 100 }}>ID</th>
+                    <th style={{ width: 100 }}>Sévérité</th>
+                    <th style={{ width: 150 }}>Module</th>
+                    <th>Description</th>
+                    <th style={{ width: 120 }}>Montant</th>
+                    <th style={{ width: 100 }}>Statut</th>
+                    <th style={{ width: 120 }}>Assigné à</th>
+                    <th style={{ width: 120 }}>Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dbAnomalies.map((a) => (
+                    <tr key={a.id}>
+                      <td><b>{a.anomalyId}</b></td>
+                      <td>{badge((a.severity || 'mineur').toUpperCase(), a.severity || 'mineur')}</td>
+                      <td>{a.moduleName || a.module}</td>
+                      <td>
+                        <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: 4 }}>
+                          {a.title}
+                        </div>
+                        <div className="small" style={{ 
+                          display: '-webkit-box',
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: 'vertical' as const,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis'
+                        }}>
+                          {a.description}
+                        </div>
+                        {a.suggestion && (
+                          <div className="small" style={{ color: '#6b7280', marginTop: 4 }}>
+                            💡 {a.suggestion.substring(0, 60)}...
+                          </div>
+                        )}
+                      </td>
+                      <td>{a.amount ? formatAmount(a.amount) : '-'}</td>
+                      <td>{badge((a.status || 'inconnu').replace('_', ' '), a.status || 'inconnu')}</td>
+                      <td>{a.assignedUserName || <span style={{ color: '#9ca3af' }}>Non assigné</span>}</td>
+                      <td>
+                        <div className="action-stack" style={{ gap: 4 }}>
+                          <button 
+                            className="btn btn-primary btn-mini" 
+                            onClick={() => setSelectedAnomaly(a)}
+                          >
+                            📄 Détail
+                          </button>
+                          <button 
+                            className="btn btn-secondary btn-mini" 
+                            onClick={() => setAnomalyModal(a)}
+                          >
+                            ✏️ Traiter
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            {/* Pagination */}
+            {anomalyPagination.totalPages > 1 && (
+              <div className="toolbar" style={{ justifyContent: 'center', gap: 8, marginTop: 16 }}>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={anomalyPagination.page <= 1}
+                  onClick={() => loadAnomalies(1)}
+                >
+                  « Premier
+                </button>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={anomalyPagination.page <= 1}
+                  onClick={() => loadAnomalies(anomalyPagination.page - 1)}
+                >
+                  ‹ Précédent
+                </button>
+                <span className="schema-pill">
+                  Page {anomalyPagination.page} / {anomalyPagination.totalPages}
+                </span>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={anomalyPagination.page >= anomalyPagination.totalPages}
+                  onClick={() => loadAnomalies(anomalyPagination.page + 1)}
+                >
+                  Suivant ›
+                </button>
+                <button 
+                  className="btn btn-secondary" 
+                  disabled={anomalyPagination.page >= anomalyPagination.totalPages}
+                  onClick={() => loadAnomalies(anomalyPagination.totalPages)}
+                >
+                  Dernier »
+                </button>
+              </div>
+            )}
+          </>
+        )}
       </>
     );
   }
@@ -344,6 +557,7 @@ export default function HomePage() {
       <main className="main"><header className="topbar"><div><h2>{NAV_ITEMS.find(([id]) => id === active)?.[1]}</h2><span>Entreprise : Multiprint / Groupe — connexion PostgreSQL distante via .env</span></div><div className="status-line"><span>Xavier</span><span className="badge badge-info">Administrateur</span></div></header><section className="content">{error && <div className="error">{error}</div>}{content()}</section></main>
       {modalRow && <RecordModal row={modalRow} onClose={() => setModalRow(null)} />}
       {anomalyModal && <AnomalyModal anomaly={anomalyModal} onClose={() => setAnomalyModal(null)} />}
+      {selectedAnomaly && <AnomalyDetailModal anomaly={selectedAnomaly} onClose={() => setSelectedAnomaly(null)} />}
     </div>
   );
 }
@@ -418,5 +632,240 @@ function RecordModal({ row, onClose }: { row: Row; onClose: () => void }) {
 }
 
 function AnomalyModal({ anomaly, onClose }: { anomaly: Anomaly; onClose: () => void }) {
-  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Traitement de l’anomalie</h3><p className="small">Demande de justification, décision de traitement et traçabilité.</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div><div className="grid grid-2"><div className="card"><b>ID :</b> {anomaly.id}<br /><b>Module :</b> {anomaly.module}<br /><b>Table :</b> {anomaly.table}<br /><b>Type :</b> {anomaly.type}<br /><b>Risque :</b> {badge(anomaly.risk, anomaly.risk)}<br /><b>Montant :</b> {formatAmount(anomaly.amount)}<br /><b>Référence :</b> {anomaly.reference}</div><div className="card"><b>Description :</b><p>{anomaly.description}</p><br /><b>Recommandation :</b><p>{anomaly.recommendation}</p><br /><b>Justification :</b> {badge(anomaly.justificationStatus, 'neutral')}</div></div><div className="grid grid-2" style={{ marginTop: 16 }}><div className="card"><label>Statut de traitement</label><select defaultValue={anomaly.status} style={{ width: '100%', marginTop: 8 }}><option>ouverte</option><option>en cours</option><option>justifiée</option><option>clôturée</option></select></div><div className="card"><label>État de la justification</label><select defaultValue={anomaly.justificationStatus} style={{ width: '100%', marginTop: 8 }}><option>sans justificatif</option><option>demandée</option><option>reçue</option><option>validée</option><option>rejetée</option></select></div></div><div className="card" style={{ marginTop: 16 }}><label>Demande de justification envoyée au responsable</label><textarea defaultValue={`Merci de fournir les pièces justificatives et l’explication de cette anomalie : ${anomaly.type} / référence ${anomaly.reference}`} /></div><div className="grid grid-2" style={{ marginTop: 16 }}><div className="card"><label>Fichier justificatif</label><input type="file" style={{ width: '100%', marginTop: 8 }} /></div><div className="card"><label>Fourni par</label><input defaultValue="Xavier" style={{ width: '100%', marginTop: 8 }} /></div></div><div className="card" style={{ marginTop: 16 }}><label>Commentaire auditeur / justification reçue</label><textarea placeholder="Saisir ici la justification reçue, l’analyse de l’auditeur ou la décision." /></div><div className="toolbar" style={{ marginTop: 16 }}><button className="btn btn-warning">Demander justificatif</button><button className="btn btn-primary">Joindre justificatif</button><button className="btn btn-secondary">Voir / télécharger</button><button className="btn btn-green">Valider justificatif</button><button className="btn btn-danger">Rejeter justificatif</button><button className="btn btn-primary">Enregistrer</button><button className="btn btn-green">Clôturer</button></div></div></div>;
+  return <div className="modal-backdrop"><div className="modal-card" style={{ maxWidth: 800 }}>
+    <div className="modal-header">
+      <div>
+        <h3>Traitement de l'anomalie {anomaly.anomalyId}</h3>
+        <p className="small">Détectée le {new Date(anomaly.detectedAt).toLocaleDateString('fr-FR')}</p>
+      </div>
+      <button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button>
+    </div>
+    
+    <div className="grid grid-2">
+      <div className="card">
+        <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>📋 Informations</h4>
+        <b>ID :</b> {anomaly.anomalyId}<br />
+        <b>Module :</b> {anomaly.moduleName || anomaly.module}<br />
+        <b>Table source :</b> {anomaly.sourceTable || '-'}<br />
+        <b>Type :</b> {anomaly.anomalyType}<br />
+        <b>Sévérité :</b> {badge((anomaly.severity || 'mineur').toUpperCase(), anomaly.severity || 'mineur')}<br />
+        <b>Montant :</b> {anomaly.amount ? formatAmount(anomaly.amount) : '-'}<br />
+        <b>Référence :</b> {anomaly.referenceNumber || '-'}<br />
+        <b>Assigné à :</b> {anomaly.assignedUserName || 'Non assigné'}
+      </div>
+      
+      <div className="card">
+        <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>📝 Description</h4>
+        <p><b>{anomaly.title}</b></p>
+        <p>{anomaly.description}</p>
+        {anomaly.suggestion && (
+          <p style={{ color: '#6b7280', marginTop: 8 }}>💡 <b>Suggestion :</b> {anomaly.suggestion}</p>
+        )}
+        <br />
+        <b>Justification :</b> {badge((anomaly.justificationStatus || 'sans_justificatif').replace('_', ' '), anomaly.justificationStatus || 'sans_justificatif')}
+      </div>
+    </div>
+    
+    <div className="grid grid-2" style={{ marginTop: 16 }}>
+      <div className="card">
+        <label>Statut de traitement</label>
+        <select defaultValue={anomaly.status} style={{ width: '100%', marginTop: 8 }}>
+          <option value="ouverte">Ouverte</option>
+          <option value="en_cours">En cours</option>
+          <option value="justifiee">Justifiée</option>
+          <option value="cloturee">Clôturée</option>
+        </select>
+      </div>
+      <div className="card">
+        <label>État de la justification</label>
+        <select defaultValue={anomaly.justificationStatus} style={{ width: '100%', marginTop: 8 }}>
+          <option value="sans_justificatif">Sans justificatif</option>
+          <option value="demandee">Demandée</option>
+          <option value="recue">Reçue</option>
+          <option value="validee">Validée</option>
+          <option value="rejetee">Rejetée</option>
+        </select>
+      </div>
+    </div>
+    
+    <div className="card" style={{ marginTop: 16 }}>
+      <label>Demande de justification envoyée au responsable</label>
+      <textarea 
+        defaultValue={`Merci de fournir les pièces justificatives et l'explication de cette anomalie : ${anomaly.anomalyType} / référence ${anomaly.referenceNumber || 'N/A'}`}
+        style={{ width: '100%', marginTop: 8, minHeight: 80 }}
+      />
+    </div>
+    
+    <div className="grid grid-2" style={{ marginTop: 16 }}>
+      <div className="card">
+        <label>Fichier justificatif</label>
+        <input type="file" style={{ width: '100%', marginTop: 8 }} />
+      </div>
+      <div className="card">
+        <label>Fourni par</label><input defaultValue="Xavier" style={{ width: '100%', marginTop: 8 }} /></div></div><div className="card" style={{ marginTop: 16 }}><label>Commentaire auditeur / justification reçue</label><textarea placeholder="Saisir ici la justification reçue, l’analyse de l’auditeur ou la décision." /></div><div className="toolbar" style={{ marginTop: 16 }}><button className="btn btn-warning">Demander justificatif</button><button className="btn btn-primary">Joindre justificatif</button><button className="btn btn-secondary">Voir / télécharger</button><button className="btn btn-green">Valider justificatif</button><button className="btn btn-danger">Rejeter justificatif</button><button className="btn btn-primary">Enregistrer</button><button className="btn btn-green">Clôturer</button></div></div></div>;
+}
+
+// Modale de détail lecture seule pour plus d'ergonomie
+function AnomalyDetailModal({ anomaly, onClose }: { anomaly: Anomaly; onClose: () => void }) {
+  const severityColors = {
+    critique: { bg: '#fee2e2', border: '#dc2626', text: '#991b1b' },
+    majeur: { bg: '#fef3c7', border: '#d97706', text: '#92400e' },
+    mineur: { bg: '#e0f2fe', border: '#0284c7', text: '#0369a1' }
+  };
+  const severityKey = ((anomaly.severity || 'mineur').toString().toLowerCase().trim() as 'critique' | 'majeur' | 'mineur');
+  const colors = severityColors[severityKey] || severityColors.mineur;
+  
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-card" style={{ maxWidth: 700, maxHeight: '90vh', overflow: 'auto' }} onClick={(e) => e.stopPropagation()}>
+        {/* Header */}
+        <div className="modal-header" style={{ 
+          background: colors.bg, 
+          borderLeft: `4px solid ${colors.border}`,
+          borderRadius: '8px 8px 0 0',
+          padding: '16px 20px'
+        }}>
+          <div style={{ flex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 4 }}>
+              <span style={{ 
+                padding: '4px 12px', 
+                borderRadius: 4, 
+                background: colors.border, 
+                color: 'white',
+                fontSize: 12,
+                fontWeight: 600,
+                textTransform: 'uppercase'
+              }}>
+                {anomaly.severity || 'mineur'}
+              </span>
+              <h3 style={{ margin: 0, color: colors.text }}>{anomaly.anomalyId}</h3>
+            </div>
+            <p className="small" style={{ margin: 0, color: '#6b7280' }}>
+              Détectée le {new Date(anomaly.detectedAt).toLocaleDateString('fr-FR', { 
+                day: '2-digit', 
+                month: 'long', 
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+              })}
+            </p>
+          </div>
+          <button className="btn btn-secondary btn-mini" onClick={onClose}>✕ Fermer</button>
+        </div>
+        
+        {/* Content */}
+        <div style={{ padding: 20 }}>
+          {/* Titre principal */}
+          <div style={{ marginBottom: 20 }}>
+            <h2 style={{ 
+              fontSize: 20, 
+              fontWeight: 600, 
+              color: 'var(--primary)', 
+              marginBottom: 8 
+            }}>
+              {anomaly.title}
+            </h2>
+            <p style={{ fontSize: 15, lineHeight: 1.6, color: '#374151' }}>
+              {anomaly.description}
+            </p>
+          </div>
+          
+          {/* Info cards */}
+          <div className="grid grid-3" style={{ gap: 12, marginBottom: 20 }}>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 4 }}>Module</div>
+              <div style={{ fontWeight: 600 }}>{anomaly.moduleName || anomaly.module}</div>
+            </div>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 4 }}>Type</div>
+              <div style={{ fontWeight: 600 }}>{anomaly.anomalyType}</div>
+            </div>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 4 }}>Table source</div>
+              <div style={{ fontWeight: 600 }}>{anomaly.sourceTable || '-'}</div>
+            </div>
+          </div>
+          
+          {/* Montant et référence */}
+          <div className="grid grid-2" style={{ gap: 12, marginBottom: 20 }}>
+            <div className="card" style={{ 
+              padding: 16, 
+              background: anomaly.amount ? '#f0fdf4' : '#f9fafb',
+              borderLeft: `3px solid ${anomaly.amount ? '#15803d' : '#d1d5db'}`
+            }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 4 }}>Montant concerné</div>
+              <div style={{ fontSize: 20, fontWeight: 700, color: anomaly.amount ? '#15803d' : '#9ca3af' }}>
+                {anomaly.amount ? formatAmount(anomaly.amount) : 'Non applicable'}
+              </div>
+            </div>
+            <div className="card" style={{ padding: 16, borderLeft: '3px solid var(--primary)' }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 4 }}>Référence</div>
+              <div style={{ fontSize: 18, fontWeight: 600 }}>
+                {anomaly.referenceNumber || <span style={{ color: '#9ca3af' }}>Non renseignée</span>}
+              </div>
+            </div>
+          </div>
+          
+          {/* Suggestion */}
+          {anomaly.suggestion && (
+            <div className="card" style={{ 
+              padding: 16, 
+              background: '#eff6ff', 
+              borderLeft: '3px solid #3b82f6',
+              marginBottom: 20 
+            }}>
+              <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                <span style={{ fontSize: 20 }}>💡</span>
+                <div>
+                  <div style={{ fontWeight: 600, color: '#1e40af', marginBottom: 4 }}>Action suggérée</div>
+                  <div style={{ color: '#374151' }}>{anomaly.suggestion}</div>
+                </div>
+              </div>
+            </div>
+          )}
+          
+          {/* Statuts */}
+          <div className="grid grid-2" style={{ gap: 12 }}>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 8 }}>Statut de traitement</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <span style={{ 
+                  width: 12, 
+                  height: 12, 
+                  borderRadius: '50%', 
+                  background: anomaly.status === 'ouverte' ? '#dc2626' : 
+                              anomaly.status === 'en_cours' ? '#d97706' : 
+                              anomaly.status === 'justifiee' ? '#16a34a' : '#15803d'
+                }}></span>
+                <span style={{ fontWeight: 600, textTransform: 'capitalize' }}>
+                  {(anomaly.status || 'inconnu').replace('_', ' ')}
+                </span>
+              </div>
+            </div>
+            <div className="card" style={{ padding: 16 }}>
+              <div className="small" style={{ color: '#6b7280', marginBottom: 8 }}>Justification</div>
+              <div style={{ fontWeight: 600 }}>
+                {(anomaly.justificationStatus || 'sans_justificatif').replace('_', ' ')}
+              </div>
+            </div>
+          </div>
+          
+          {/* Assignation */}
+          {anomaly.assignedUserName && (
+            <div className="card" style={{ 
+              marginTop: 12, 
+              padding: 12, 
+              background: '#f3f4f6',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              <span>👤</span>
+              <span>Assigné à : <b>{anomaly.assignedUserName}</b></span>
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
 }

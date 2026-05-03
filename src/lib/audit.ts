@@ -2,7 +2,8 @@ export type RecordStatus = 'Conforme' | 'À surveiller' | 'À vérifier' | 'Anom
 export type RiskLevel = 'faible' | 'moyen' | 'critique';
 export type AnomalyType = 
   | 'montant_anormal' 
-  | 'echeance_depassee' 
+  | 'echeance_depassee'
+  | 'date_incoherente'
   | 'reference_manquante' 
   | 'balance_desequilibree'
   | 'doublon_detecte'

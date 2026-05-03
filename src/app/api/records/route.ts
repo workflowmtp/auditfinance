@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { DB_SCHEMA, MODULE_BY_ID } from '@/lib/modules';
 import { query, quoteIdent } from '@/lib/db';
 import { analyzeRecord } from '@/lib/audit';
+import { syncAnomaliesFromAnalysis } from '@/lib/audit-db';
 
 async function existingColumns(table: string, schema: string = DB_SCHEMA) {
   const res = await query(
@@ -104,7 +105,39 @@ export async function GET(req: NextRequest) {
     console.log('Params:', params);
 
     const res = await query(sql, params);
-    const rows = (res.rows as Record<string, unknown>[]).map((row) => ({ ...row, _audit: analyzeRecord(row, moduleId) }));
+    const rawRows = res.rows as Record<string, unknown>[];
+    const rows = rawRows.map((row) => ({ ...row, _audit: analyzeRecord(row, moduleId) }));
+    
+    // Synchroniser les anomalies détectées vers la base de données
+    // Seulement si on a des résultats et qu'on est sur la première page (évite les doublons)
+    if (page === 1 && rows.length > 0) {
+      try {
+        const recordsWithAnomalies = rows
+          .filter((r) => r._audit?.anomalies && r._audit.anomalies.length > 0)
+          .map((r) => {
+            const raw = r as Record<string, unknown>;
+            return {
+              recordId: String(raw.id || raw.uuid || raw.code || raw.number || raw.document_number || raw.invoice_number || raw.reference || Math.random().toString(36).substring(7)),
+              audit: r._audit!,
+              data: raw
+            };
+          });
+        
+        if (recordsWithAnomalies.length > 0) {
+          const syncResult = await syncAnomaliesFromAnalysis(
+            moduleId,
+            recordsWithAnomalies,
+            config.table as string,
+            schema
+          );
+          console.log(`[Sync] ${syncResult.created} nouvelles anomalies, ${syncResult.updated} mises à jour`);
+        }
+      } catch (syncError) {
+        console.error('[Sync] Erreur synchronisation anomalies:', syncError);
+        // On continue même si la synchro échoue (la table audit_management pourrait ne pas exister)
+      }
+    }
+    
     return NextResponse.json({
       module: moduleId,
       table: config.table,

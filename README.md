@@ -89,3 +89,52 @@ Puis déployer.
 ## 8. Sécurité SQL
 
 Les routes API utilisent un mapping de tables autorisées dans `src/lib/modules.ts`. L’utilisateur ne peut pas envoyer directement un nom de table arbitraire dans les requêtes SQL.
+
+## 9. Système de gestion des anomalies
+
+### 9.1 Initialisation de la base
+
+Exécuter dans pgAdmin le script d'initialisation :
+
+```sql
+-- Ouvrir scripts/init-audit-db.sql dans pgAdmin et exécuter
+```
+
+Cela crée :
+- Le schéma `audit_management`
+- Les tables : `users`, `anomalies`, `anomaly_history`, `attachments`, `thresholds`, `audit_log`
+- Les triggers pour générer les IDs et mettre à jour les dates
+- 3 utilisateurs de test (admin, auditeur, comptable)
+
+### 9.2 Données de test
+
+Pour insérer des anomalies de test :
+
+```sql
+-- Ouvrir scripts/seed-anomalies.sql dans pgAdmin et exécuter
+```
+
+### 9.3 Synchronisation automatique
+
+Les anomalies sont automatiquement synchronisées vers `audit_management.anomalies` quand on charge des données via `/api/records`.
+
+### 9.4 API Endpoints
+
+| Endpoint | Description |
+|----------|-------------|
+| `GET /api/anomalies` | Liste avec filtres |
+| `GET /api/anomalies/:id` | Détail d'une anomalie |
+| `POST /api/anomalies/:id/status` | Changer le statut |
+| `POST /api/anomalies/:id/assign` | Assigner à un utilisateur |
+| `GET /api/anomalies/:id/history` | Historique des actions |
+| `GET /api/anomalies/stats` | Statistiques globales |
+| `GET /api/users` | Liste des utilisateurs |
+
+### 9.5 Fichiers du système
+
+```
+src/lib/audit-db.ts              # CRUD et synchronisation
+src/app/api/anomalies/           # Routes API anomalies
+scripts/init-audit-db.sql        # Création des tables
+scripts/seed-anomalies.sql       # Données de test
+docs/api-anomalies.md            # Documentation API
