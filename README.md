@@ -79,10 +79,11 @@ Les autres rubriques sont conservées dans l’interface et prêtes à être enr
 
 Ajouter les variables dans Vercel > Project Settings > Environment Variables :
 
-- `DATABASE_URL`
-- `DB_SCHEMA`
-- `PGSSL`
-- `DEFAULT_LIMIT`
+- `DATABASE_URL` (obligatoire) - Connexion PostgreSQL pour les données métier
+- `DB_SCHEMA` (obligatoire) - Schéma des données (ex: `analytics`)
+- `PGSSL` (optionnel, défaut: `true`) - SSL activé
+- `DEFAULT_LIMIT` (optionnel, défaut: `200`) - Limite de lignes
+- `AUDIT_POSTGRES_URL` (optionnel) - Connexion séparée pour les anomalies (voir §10)
 
 Puis déployer.
 
@@ -138,3 +139,36 @@ src/app/api/anomalies/           # Routes API anomalies
 scripts/init-audit-db.sql        # Création des tables
 scripts/seed-anomalies.sql       # Données de test
 docs/api-anomalies.md            # Documentation API
+
+## 10. Double connexion PostgreSQL (données métier vs anomalies)
+
+L'application utilise désormais **deux connexions PostgreSQL distinctes** :
+
+| Variable | Usage | Obligatoire |
+|----------|-------|-------------|
+| `DATABASE_URL` | Données métier (`analytics.*`) | **Oui** |
+| `AUDIT_POSTGRES_URL` | Anomalies (`audit_management.*`) | **Non** |
+
+### Configuration
+
+**Option 1 - Même serveur, schémas différents (par défaut)** :
+```env
+DATABASE_URL="postgresql://user:pass@host:5432/db?sslmode=require"
+# AUDIT_POSTGRES_URL non défini → utilise DATABASE_URL
+```
+Le schéma `audit_management` doit exister dans la même base que `analytics`.
+
+**Option 2 - Serveurs complètement séparés** :
+```env
+DATABASE_URL="postgresql://user:pass@host1:5432/db?sslmode=require"
+AUDIT_POSTGRES_URL="postgresql://user:pass@host2:5432/audit_db?sslmode=require"
+```
+Idéal si les anomalies doivent être stockées dans une base dédiée ou chez un autre hébergeur.
+
+### Implémentation technique
+
+Les fonctions de connexion sont dans `src/lib/db.ts` :
+- `getPool()` : connexion principale (analytics)
+- `getAuditPool()` : connexion audit (audit_management)
+- `query()` : exécute via `getPool()`
+- `queryAudit()` : exécute via `getAuditPool()`

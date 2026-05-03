@@ -3,7 +3,7 @@
 // Utilise pg (déjà installé) pour accéder à audit_management
 // ============================================
 
-import { query } from './db';
+import { queryAudit } from './db';
 
 // Types
 export interface AnomalyRecord {
@@ -102,7 +102,7 @@ export async function createAnomaly(data: CreateAnomalyInput): Promise<AnomalyRe
     data.amount, data.amountCurrency, data.referenceNumber, data.status, data.justificationStatus,
     data.assignedTo, data.dueDate, data.riskScore, data.riskLevel, data.isFalsePositive
   ];
-  const result = await query(sql, params);
+  const result = await queryAudit(sql, params);
   return result.rows[0] as AnomalyRecord;
 }
 
@@ -113,7 +113,7 @@ export async function getAnomalyById(id: number): Promise<AnomalyRecord | null> 
     LEFT JOIN audit_management.users u ON a.assigned_to = u.id
     WHERE a.id = $1
   `;
-  const result = await query(sql, [id]);
+  const result = await queryAudit(sql, [id]);
   return result.rows[0] as AnomalyRecord || null;
 }
 
@@ -149,7 +149,7 @@ export async function getAnomalies(filters?: {
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
   
   // Count
-  const countResult = await query(
+  const countResult = await queryAudit(
     `SELECT COUNT(*) as total FROM audit_management.anomalies ${whereClause}`,
     params
   );
@@ -168,7 +168,7 @@ export async function getAnomalies(filters?: {
   `;
   params.push(limit, offset);
   
-  const dataResult = await query(dataSql, params);
+  const dataResult = await queryAudit(dataSql, params);
   return { rows: dataResult.rows as AnomalyRecord[], total };
 }
 
@@ -179,17 +179,17 @@ export async function updateAnomalyStatus(
   comment?: string
 ): Promise<void> {
   // Get current status
-  const current = await query('SELECT status FROM audit_management.anomalies WHERE id = $1', [id]);
+  const current = await queryAudit('SELECT status FROM audit_management.anomalies WHERE id = $1', [id]);
   const oldStatus = current.rows[0]?.status as string;
 
   // Update anomaly
-  await query(
+  await queryAudit(
     'UPDATE audit_management.anomalies SET status = $1, updated_at = NOW() WHERE id = $2',
     [newStatus, id]
   );
 
   // Add history
-  await query(
+  await queryAudit(
     `INSERT INTO audit_management.anomaly_history (anomaly_id, action_type, action_by, old_status, new_status, comment)
      VALUES ($1, 'changement_statut', $2, $3, $4, $5)`,
     [id, userId, oldStatus, newStatus, comment || null]
@@ -197,11 +197,11 @@ export async function updateAnomalyStatus(
 }
 
 export async function assignAnomaly(id: number, assignedTo: number, assignedBy: number): Promise<void> {
-  await query(
+  await queryAudit(
     'UPDATE audit_management.anomalies SET assigned_to = $1, updated_at = NOW() WHERE id = $2',
     [assignedTo, id]
   );
-  await query(
+  await queryAudit(
     `INSERT INTO audit_management.anomaly_history (anomaly_id, action_type, action_by, comment)
      VALUES ($1, 'assignation', $2, $3)`,
     [id, assignedBy, `Assigné à l'utilisateur ${assignedTo}`]
@@ -213,14 +213,14 @@ export async function assignAnomaly(id: number, assignedTo: number, assignedBy: 
 // ============================================
 
 export async function getUsers(): Promise<UserRecord[]> {
-  const result = await query(
+  const result = await queryAudit(
     'SELECT id, username, email, full_name, role, department, is_active FROM audit_management.users WHERE is_active = true'
   );
   return result.rows as UserRecord[];
 }
 
 export async function getUserByUsername(username: string): Promise<UserRecord | null> {
-  const result = await query(
+  const result = await queryAudit(
     'SELECT id, username, email, full_name, role, department, is_active FROM audit_management.users WHERE username = $1',
     [username]
   );
@@ -237,21 +237,21 @@ export async function getAnomalyStats(): Promise<{
   bySeverity: Record<string, number>;
   byModule: Record<string, number>;
 }> {
-  const totalResult = await query('SELECT COUNT(*) as count FROM audit_management.anomalies');
+  const totalResult = await queryAudit('SELECT COUNT(*) as count FROM audit_management.anomalies');
   
-  const byStatusResult = await query(`
+  const byStatusResult = await queryAudit(`
     SELECT status, COUNT(*) as count 
     FROM audit_management.anomalies 
     GROUP BY status
   `);
   
-  const bySeverityResult = await query(`
+  const bySeverityResult = await queryAudit(`
     SELECT severity, COUNT(*) as count 
     FROM audit_management.anomalies 
     GROUP BY severity
   `);
   
-  const byModuleResult = await query(`
+  const byModuleResult = await queryAudit(`
     SELECT module, COUNT(*) as count 
     FROM audit_management.anomalies 
     GROUP BY module
@@ -297,7 +297,7 @@ export async function syncAnomaliesFromAnalysis(
 
     for (const anomaly of record.audit.anomalies) {
       // Vérifier si déjà existante
-      const existing = await query(
+      const existing = await queryAudit(
         `SELECT id FROM audit_management.anomalies 
          WHERE source_record_id = $1 AND anomaly_type = $2 AND module = $3`,
         [record.recordId, anomaly.type, moduleId]
@@ -334,7 +334,7 @@ export async function syncAnomaliesFromAnalysis(
         created++;
       } else {
         // Mettre à jour si changement de sévérité
-        await query(
+        await queryAudit(
           `UPDATE audit_management.anomalies 
            SET severity = $1, risk_score = $2, risk_level = $3, updated_at = NOW()
            WHERE id = $4`,

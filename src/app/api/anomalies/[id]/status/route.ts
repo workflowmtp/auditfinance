@@ -5,7 +5,7 @@
 // ============================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { queryAudit } from '@/lib/db';
 
 export async function POST(
   req: NextRequest,
@@ -18,7 +18,7 @@ export async function POST(
     const userId = body.userId || 1; // Default admin
     
     // Get current status
-    const currentResult = await query(
+    const currentResult = await queryAudit(
       'SELECT status FROM audit_management.anomalies WHERE id = $1',
       [anomalyId]
     );
@@ -33,13 +33,13 @@ export async function POST(
     const oldStatus = currentResult.rows[0].status;
     
     // Update status
-    await query(
+    await queryAudit(
       'UPDATE audit_management.anomalies SET status = $1, updated_at = NOW() WHERE id = $2',
       [body.status, anomalyId]
     );
     
     // Add to history
-    await query(
+    await queryAudit(
       `INSERT INTO audit_management.anomaly_history 
        (anomaly_id, action_type, action_by, old_status, new_status, comment)
        VALUES ($1, 'changement_statut', $2, $3, $4, $5)`,

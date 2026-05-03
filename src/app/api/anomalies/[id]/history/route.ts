@@ -4,7 +4,7 @@
 // ============================================
 
 import { NextRequest, NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { queryAudit } from '@/lib/db';
 
 export async function GET(
   _req: NextRequest,
@@ -13,7 +13,7 @@ export async function GET(
   try {
     const { id } = await params;
     
-    const result = await query(
+    const result = await queryAudit(
       `SELECT h.*, u.full_name as user_name
        FROM audit_management.anomaly_history h
        LEFT JOIN audit_management.users u ON h.action_by = u.id

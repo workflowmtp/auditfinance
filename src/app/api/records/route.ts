@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { DB_SCHEMA, MODULE_BY_ID } from '@/lib/modules';
 import { query, quoteIdent } from '@/lib/db';
 import { analyzeRecord } from '@/lib/audit';
-import { syncAnomaliesFromAnalysis } from '@/lib/audit-db';
+// import { syncAnomaliesFromAnalysis } from '@/lib/audit-db';
 
 async function existingColumns(table: string, schema: string = DB_SCHEMA) {
   const res = await query(
@@ -123,15 +123,16 @@ export async function GET(req: NextRequest) {
             };
           });
         
-        if (recordsWithAnomalies.length > 0) {
-          const syncResult = await syncAnomaliesFromAnalysis(
-            moduleId,
-            recordsWithAnomalies,
-            config.table as string,
-            schema
-          );
-          console.log(`[Sync] ${syncResult.created} nouvelles anomalies, ${syncResult.updated} mises à jour`);
-        }
+        // [DÉSACTIVÉ] Synchronisation automatique des anomalies - erreur contrainte severity
+        // if (recordsWithAnomalies.length > 0) {
+        //   const syncResult = await syncAnomaliesFromAnalysis(
+        //     moduleId,
+        //     recordsWithAnomalies,
+        //     config.table as string,
+        //     schema
+        //   );
+        //   console.log(`[Sync] ${syncResult.created} nouvelles anomalies, ${syncResult.updated} mises à jour`);
+        // }
       } catch (syncError) {
         console.error('[Sync] Erreur synchronisation anomalies:', syncError);
         // On continue même si la synchro échoue (la table audit_management pourrait ne pas exister)
