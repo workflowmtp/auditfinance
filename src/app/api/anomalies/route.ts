@@ -16,6 +16,8 @@ export async function GET(req: NextRequest) {
       severity: url.searchParams.get('severity') || undefined,
       module: url.searchParams.get('module') || undefined,
       assignedTo: url.searchParams.get('assignedTo') ? parseInt(url.searchParams.get('assignedTo')!) : undefined,
+      startDate: url.searchParams.get('startDate') || undefined,
+      endDate: url.searchParams.get('endDate') || undefined,
       limit: parseInt(url.searchParams.get('limit') || '50'),
       offset: parseInt(url.searchParams.get('offset') || '0')
     };

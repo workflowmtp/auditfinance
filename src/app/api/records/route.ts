@@ -1,8 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { DB_SCHEMA, MODULE_BY_ID } from '@/lib/modules';
-import { query, quoteIdent } from '@/lib/db';
-import { analyzeRecord } from '@/lib/audit';
-// import { syncAnomaliesFromAnalysis } from '@/lib/audit-db';
+import { query } from '@/lib/db';
+import { getRecordsWithAnomalies, buildAuditFromDbAnomalies } from '@/lib/records-with-anomalies';
 
 async function existingColumns(table: string, schema: string = DB_SCHEMA) {
   const res = await query(
@@ -17,7 +16,7 @@ export async function GET(req: NextRequest) {
   const moduleId = url.searchParams.get('module') || 'entries';
   const config = MODULE_BY_ID[moduleId];
   const schema = config?.schema || DB_SCHEMA;
-  
+
   if (!config?.table) return NextResponse.json({ error: 'Module non connecté à une table.' }, { status: 400 });
 
   // Pagination parameters
@@ -31,19 +30,22 @@ export async function GET(req: NextRequest) {
     const endDate = url.searchParams.get('endDate')?.trim();
     const sortBy = url.searchParams.get('sortBy')?.trim();
     const sortDir = url.searchParams.get('sortDir') === 'asc' ? 'asc' : 'desc';
-    
+    const statusFilter = url.searchParams.get('statusFilter')?.trim() || 'all';
+    const riskFilter = url.searchParams.get('riskFilter')?.trim() || 'all';
+
     console.log(`[Records API] Module: ${moduleId}, Table: ${config.table}, Schema: ${schema}`);
+    console.log(`[Records API] Query params: q=${q}, startDate=${startDate}, endDate=${endDate}, sortBy=${sortBy}, sortDir=${sortDir}, statusFilter=${statusFilter}, riskFilter=${riskFilter}`);
 
     const cols = await existingColumns(config.table, schema);
-    
+
     // Si aucune colonne n'est trouvée, la table n'existe probablement pas
     if (cols.size === 0) {
       console.warn(`[Records API] Table ${schema}.${config.table} non trouvée ou vide`);
-      return NextResponse.json({ 
-        module: moduleId, 
-        table: config.table, 
+      return NextResponse.json({
+        module: moduleId,
+        table: config.table,
         schema,
-        columns: [], 
+        columns: [],
         rows: [],
         pagination: { page, limit, total: 0, totalPages: 1, offset },
         warning: `Table ${schema}.${config.table} non trouvée dans la base de données`
@@ -55,23 +57,22 @@ export async function GET(req: NextRequest) {
     const dateCol = config.dateColumns.find((c) => cols.has(c));
     const searchCols = config.searchColumns.filter((c) => cols.has(c));
 
-    const params: unknown[] = [];
     const where: string[] = [];
+    const params: unknown[] = [];
 
     if (q && searchCols.length) {
       params.push(`%${q}%`);
-      const p = `$${params.length}`;
-      where.push(`(${searchCols.map((c) => `${quoteIdent(c)}::text ilike ${p}`).join(' or ')})`);
+      where.push(`(${searchCols.map((c) => `s."${c}"::text ilike $${params.length}`).join(' or ')})`);
     }
 
     if (startDate && dateCol) {
       params.push(startDate);
-      where.push(`${quoteIdent(dateCol)}::date >= $${params.length}::date`);
+      where.push(`s."${dateCol}"::date >= $${params.length}::date`);
     }
 
     if (endDate && dateCol) {
       params.push(endDate);
-      where.push(`${quoteIdent(dateCol)}::date <= $${params.length}::date`);
+      where.push(`s."${dateCol}"::date <= $${params.length}::date`);
     }
 
     // Column filters
@@ -86,59 +87,37 @@ export async function GET(req: NextRequest) {
       if (cols.has(col)) {
         params.push(val.includes('%') || val.includes('*') ? val.replace(/\*/g, '%') : val);
         const op = val.includes('%') || val.includes('*') ? 'ilike' : '=';
-        where.push(`${quoteIdent(col)}::text ${op} $${params.length}`);
+        where.push(`s."${col}"::text ${op} $${params.length}`);
       }
     }
 
-    // Count total
-    const countSql = `select count(*)::text as total from ${quoteIdent(schema)}.${quoteIdent(config.table as string)} ${where.length ? `where ${where.join(' and ')}` : ''}`;
-    const countRes = await query(countSql, params);
-    const total = Number((countRes.rows[0] as {total: string})?.total || 0);
-
-    // Main query with pagination
     const orderCol = sortBy && cols.has(sortBy) ? sortBy : (dateCol || finalCols[0]);
-    params.push(limit);
-    params.push(offset);
-    const sql = `select ${finalCols.map((c: string) => quoteIdent(c)).join(', ')} from ${quoteIdent(schema)}.${quoteIdent(config.table as string)} ${where.length ? `where ${where.join(' and ')}` : ''} ${orderCol ? `order by ${quoteIdent(orderCol)} ${sortDir} nulls last` : ''} limit $${params.length - 1} offset $${params.length}`;
 
-    console.log('SQL Query:', sql);
-    console.log('Params:', params);
+    console.log(`[Records API] where clauses:`, where);
+    console.log(`[Records API] params values:`, params);
 
-    const res = await query(sql, params);
-    const rawRows = res.rows as Record<string, unknown>[];
-    const rows = rawRows.map((row) => ({ ...row, _audit: analyzeRecord(row, moduleId) }));
-    
-    // Synchroniser les anomalies détectées vers la base de données
-    // Seulement si on a des résultats et qu'on est sur la première page (évite les doublons)
-    if (page === 1 && rows.length > 0) {
-      try {
-        const recordsWithAnomalies = rows
-          .filter((r) => r._audit?.anomalies && r._audit.anomalies.length > 0)
-          .map((r) => {
-            const raw = r as Record<string, unknown>;
-            return {
-              recordId: String(raw.id || raw.uuid || raw.code || raw.number || raw.document_number || raw.invoice_number || raw.reference || Math.random().toString(36).substring(7)),
-              audit: r._audit!,
-              data: raw
-            };
-          });
-        
-        // [DÉSACTIVÉ] Synchronisation automatique des anomalies - erreur contrainte severity
-        // if (recordsWithAnomalies.length > 0) {
-        //   const syncResult = await syncAnomaliesFromAnalysis(
-        //     moduleId,
-        //     recordsWithAnomalies,
-        //     config.table as string,
-        //     schema
-        //   );
-        //   console.log(`[Sync] ${syncResult.created} nouvelles anomalies, ${syncResult.updated} mises à jour`);
-        // }
-      } catch (syncError) {
-        console.error('[Sync] Erreur synchronisation anomalies:', syncError);
-        // On continue même si la synchro échoue (la table audit_management pourrait ne pas exister)
-      }
-    }
-    
+    // Récupération via LEFT JOIN LATERAL sur audit_management.anomalies
+    const { rows: rawRows, total } = await getRecordsWithAnomalies({
+      schema,
+      table: config.table,
+      moduleId,
+      columns: finalCols,
+      where: where.length ? where : undefined,
+      params: params.length ? params : undefined,
+      orderCol,
+      sortDir,
+      limit,
+      offset,
+      statusFilter,
+      riskFilter
+    });
+
+    // Mapper les anomalies DB vers le format _audit attendu par l'UI
+    const rows = rawRows.map((row) => ({
+      ...row,
+      _audit: buildAuditFromDbAnomalies(row)
+    }));
+
     return NextResponse.json({
       module: moduleId,
       table: config.table,
@@ -150,8 +129,8 @@ export async function GET(req: NextRequest) {
   } catch (error) {
     console.error('Records API Error:', error);
     const errorMessage = error instanceof Error ? error.message : 'Erreur records';
-    
-    return NextResponse.json({ 
+
+    return NextResponse.json({
       error: errorMessage,
       module: moduleId,
       table: config.table,

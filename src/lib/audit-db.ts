@@ -122,6 +122,8 @@ export async function getAnomalies(filters?: {
   severity?: string;
   module?: string;
   assignedTo?: number;
+  startDate?: string;
+  endDate?: string;
   limit?: number;
   offset?: number;
 }): Promise<{ rows: AnomalyRecord[]; total: number }> {
@@ -144,6 +146,14 @@ export async function getAnomalies(filters?: {
   if (filters?.assignedTo) {
     where.push(`assigned_to = $${paramIndex++}`);
     params.push(filters.assignedTo);
+  }
+  if (filters?.startDate) {
+    where.push(`detected_at::date >= $${paramIndex++}::date`);
+    params.push(filters.startDate);
+  }
+  if (filters?.endDate) {
+    where.push(`detected_at::date <= $${paramIndex++}::date`);
+    params.push(filters.endDate);
   }
 
   const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -231,31 +241,52 @@ export async function getUserByUsername(username: string): Promise<UserRecord | 
 // STATISTIQUES
 // ============================================
 
-export async function getAnomalyStats(): Promise<{
+export async function getAnomalyStats(filters?: {
+  status?: string;
+  severity?: string;
+  module?: string;
+  startDate?: string;
+  endDate?: string;
+}): Promise<{
   total: number;
   byStatus: Record<string, number>;
   bySeverity: Record<string, number>;
   byModule: Record<string, number>;
 }> {
-  const totalResult = await queryAudit('SELECT COUNT(*) as count FROM audit_management.anomalies');
+  const where: string[] = [];
+  const params: unknown[] = [];
+  let paramIndex = 1;
+
+  if (filters?.status) { where.push(`status = $${paramIndex++}`); params.push(filters.status); }
+  if (filters?.severity) { where.push(`severity = $${paramIndex++}`); params.push(filters.severity); }
+  if (filters?.module) { where.push(`module = $${paramIndex++}`); params.push(filters.module); }
+  if (filters?.startDate) { where.push(`detected_at::date >= $${paramIndex++}::date`); params.push(filters.startDate); }
+  if (filters?.endDate) { where.push(`detected_at::date <= $${paramIndex++}::date`); params.push(filters.endDate); }
+
+  const whereClause = where.length ? `WHERE ${where.join(' AND ')}` : '';
+
+  const totalResult = await queryAudit(`SELECT COUNT(*) as count FROM audit_management.anomalies ${whereClause}`, params);
   
   const byStatusResult = await queryAudit(`
     SELECT status, COUNT(*) as count 
     FROM audit_management.anomalies 
+    ${whereClause}
     GROUP BY status
-  `);
+  `, [...params]);
   
   const bySeverityResult = await queryAudit(`
     SELECT severity, COUNT(*) as count 
     FROM audit_management.anomalies 
+    ${whereClause}
     GROUP BY severity
-  `);
+  `, [...params]);
   
   const byModuleResult = await queryAudit(`
     SELECT module, COUNT(*) as count 
     FROM audit_management.anomalies 
+    ${whereClause}
     GROUP BY module
-  `);
+  `, [...params]);
 
   return {
     total: parseInt(totalResult.rows[0]?.count as string || '0'),

@@ -155,6 +155,8 @@ CREATE INDEX IF NOT EXISTS idx_anomalies_module ON audit_management.anomalies(mo
 CREATE INDEX IF NOT EXISTS idx_anomalies_assigned ON audit_management.anomalies(assigned_to);
 CREATE INDEX IF NOT EXISTS idx_anomalies_detected ON audit_management.anomalies(detected_at);
 CREATE INDEX IF NOT EXISTS idx_history_anomaly ON audit_management.anomaly_history(anomaly_id);
+-- Index composite pour le LEFT JOIN LATERAL (source_schema, source_record_id)
+CREATE INDEX IF NOT EXISTS idx_anomalies_source_lookup ON audit_management.anomalies(source_schema, source_record_id);
 
 -- Données initiales
 INSERT INTO audit_management.users (username, email, password_hash, full_name, role) VALUES

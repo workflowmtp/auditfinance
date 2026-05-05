@@ -323,67 +323,23 @@ function analyzeAccountingBalance(row: Record<string, unknown>, anomalies: Anoma
 // FONCTION PRINCIPALE D'ANALYSE
 // ============================================
 
+/**
+ * [NEUTRALISÉ] Les anomalies proviennent désormais UNIQUEMENT de la table
+ * audit_management.anomalies via LEFT JOIN LATERAL (src/lib/records-with-anomalies.ts).
+ * Cette fonction est conservée pour compatibilité avec les appels existants
+ * mais retourne systématiquement un résultat "Conforme" vide.
+ */
 export function analyzeRecord(
-  row: Record<string, unknown>, 
-  moduleId?: string,
-  thresholds?: Partial<typeof THRESHOLDS>
+  _row: Record<string, unknown>,
+  _moduleId?: string,
+  _thresholds?: Partial<typeof THRESHOLDS>
 ): AuditResult {
-  const mergedThresholds = { ...THRESHOLDS, ...thresholds };
-  const anomalies: AnomalyDetails[] = [];
-  
-  // Exécuter tous les analyseurs
-  let totalScore = 0;
-  totalScore += analyzeAmount(row, anomalies);
-  totalScore += analyzeDates(row, anomalies);
-  totalScore += analyzeReferences(row, anomalies);
-  totalScore += analyzeTVA(row, anomalies);
-  totalScore += analyzeSupplier(row, anomalies);
-  totalScore += analyzeAccountingBalance(row, anomalies);
-  
-  // Ajouter contexte module si disponible
-  if (moduleId) {
-    anomalies.forEach(a => {
-      if (!a.message.includes('Module')) {
-        a.message = `[${moduleId}] ${a.message}`;
-      }
-    });
-  }
-  
-  // Déterminer statut et risque global
-  const criticalCount = anomalies.filter(a => a.severity === 'critique').length;
-  const majorCount = anomalies.filter(a => a.severity === 'majeur').length;
-  
-  let status: RecordStatus;
-  let risk: RiskLevel;
-  
-  if (criticalCount > 1 || totalScore >= 70) {
-    status = 'Anomalie';
-    risk = 'critique';
-  } else if (criticalCount === 1 || totalScore >= 50 || majorCount >= 2) {
-    status = 'À vérifier';
-    risk = 'moyen';
-  } else if (totalScore >= 20 || majorCount === 1) {
-    status = 'À surveiller';
-    risk = 'faible';
-  } else {
-    status = 'Conforme';
-    risk = 'faible';
-  }
-  
-  // Générer message résumé
-  const reasons = anomalies.length > 0 
-    ? anomalies.map(a => `${a.severity.toUpperCase()}: ${a.message}`)
-    : ['✓ Aucune anomalie détectée - Document conforme aux règles de contrôle'];
-  
   return {
-    status,
-    risk,
-    score: Math.min(totalScore, 100),
-    reasons: reasons.slice(0, 5), // Limiter à 5 raisons principales
-    anomalies: anomalies.sort((a, b) => {
-      const severityOrder = { critique: 0, majeur: 1, mineur: 2 };
-      return severityOrder[a.severity] - severityOrder[b.severity];
-    })
+    status: 'Conforme',
+    risk: 'faible',
+    score: 100,
+    reasons: ['✓ Aucune anomalie détectée - Document conforme aux règles de contrôle'],
+    anomalies: []
   };
 }
 

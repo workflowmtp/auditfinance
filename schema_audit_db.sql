@@ -165,6 +165,7 @@ CREATE INDEX idx_anomalies_module ON audit_management.anomalies(module);
 CREATE INDEX idx_anomalies_assigned ON audit_management.anomalies(assigned_to);
 CREATE INDEX idx_anomalies_detected ON audit_management.anomalies(detected_at);
 CREATE INDEX idx_anomalies_type ON audit_management.anomalies(anomaly_type);
+CREATE INDEX idx_anomalies_source_lookup ON audit_management.anomalies(source_schema, source_record_id);
 CREATE INDEX idx_history_anomaly ON audit_management.anomaly_history(anomaly_id);
 CREATE INDEX idx_audit_log_user ON audit_management.audit_log(user_id);
 CREATE INDEX idx_audit_log_date ON audit_management.audit_log(created_at);

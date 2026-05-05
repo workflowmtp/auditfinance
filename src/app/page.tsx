@@ -97,6 +97,7 @@ export default function HomePage() {
   const [anomaliesError, setAnomaliesError] = useState('');
   const [anomalyFilter, setAnomalyFilter] = useState({ status: '', severity: '' });
   const [anomalyPagination, setAnomalyPagination] = useState({ page: 1, limit: 10, total: 0, totalPages: 1 });
+  const [anomalyStats, setAnomalyStats] = useState<{ total: number; bySeverity: Record<string, number>; byStatus: Record<string, number> } | null>(null);
   const [selectedAnomaly, setSelectedAnomaly] = useState<Anomaly | null>(null);
 
   const activeModule = connectedModules.find((m) => m.id === active);
@@ -122,11 +123,25 @@ export default function HomePage() {
       const params = new URLSearchParams();
       if (anomalyFilter.status) params.set('status', anomalyFilter.status);
       if (anomalyFilter.severity) params.set('severity', anomalyFilter.severity);
+      if (periodEnabled && startDate) params.set('startDate', startDate);
+      if (periodEnabled && endDate) params.set('endDate', endDate);
       params.set('limit', anomalyPagination.limit.toString());
       params.set('offset', ((page - 1) * anomalyPagination.limit).toString());
       
-      const res = await fetch(`/api/anomalies?${params.toString()}`);
+      // Fetch anomalies list and stats in parallel
+      const statsParams = new URLSearchParams();
+      if (anomalyFilter.status) statsParams.set('status', anomalyFilter.status);
+      if (anomalyFilter.severity) statsParams.set('severity', anomalyFilter.severity);
+      if (periodEnabled && startDate) statsParams.set('startDate', startDate);
+      if (periodEnabled && endDate) statsParams.set('endDate', endDate);
+
+      const [res, statsRes] = await Promise.all([
+        fetch(`/api/anomalies?${params.toString()}`),
+        fetch(`/api/anomalies/stats?${statsParams.toString()}`)
+      ]);
+
       const data = await res.json();
+      const statsData = await statsRes.json();
       
       if (data.success) {
         setDbAnomalies(data.data);
@@ -138,6 +153,10 @@ export default function HomePage() {
         }));
       } else {
         setAnomaliesError(data.error || 'Erreur lors du chargement');
+      }
+
+      if (statsData.success) {
+        setAnomalyStats(statsData.data);
       }
     } catch (e) {
       setAnomaliesError('Erreur réseau');
@@ -157,6 +176,8 @@ export default function HomePage() {
       p.set('limit', pageSize.toString());
       p.set('page', currentPage.toString());
       if (search) p.set('q', search);
+      if (statusFilter !== 'all') p.set('statusFilter', statusFilter);
+      if (riskFilter !== 'all') p.set('riskFilter', riskFilter);
       // Add column filters
       Object.entries(colFilters).forEach(([col, val]) => {
         if (val) p.set(`filter_${col}`, val);
@@ -179,23 +200,18 @@ export default function HomePage() {
 
   useEffect(() => {
     if (activeModule) loadRecords(active);
-  }, [active, periodParams, currentPage, pageSize, colFilters]);
+  }, [active, periodParams, currentPage, pageSize, colFilters, statusFilter, riskFilter]);
 
   useEffect(() => {
     if (active === 'anomalies') {
       loadAnomalies(1);
     }
-  }, [active, anomalyFilter]);
+  }, [active, anomalyFilter, periodEnabled, startDate, endDate, anomalyPagination.limit]);
 
   const filteredRows = useMemo(() => {
-    const rows = records?.rows || [];
-    return rows.filter((r) => {
-      const a = r._audit;
-      if (statusFilter !== 'all' && a?.status !== statusFilter) return false;
-      if (riskFilter !== 'all' && a?.risk !== riskFilter) return false;
-      return true;
-    });
-  }, [records, statusFilter, riskFilter]);
+    // Les filtres statut/risque sont désormais appliqués côté serveur
+    return records?.rows || [];
+  }, [records]);
 
   const dashboardStats = useMemo(() => {
     const rows = records?.rows || [];
@@ -367,15 +383,15 @@ export default function HomePage() {
             <p className="small">Total anomalies</p>
           </div>
           <div className="card">
-            <b style={{ fontSize: 24, color: '#dc2626' }}>{dbAnomalies.filter(a => a.severity === 'critique').length}</b>
+            <b style={{ fontSize: 24, color: '#dc2626' }}>{anomalyStats?.bySeverity?.critique ?? '-'}</b>
             <p className="small">Critiques</p>
           </div>
           <div className="card">
-            <b style={{ fontSize: 24, color: '#d97706' }}>{dbAnomalies.filter(a => a.severity === 'majeur').length}</b>
+            <b style={{ fontSize: 24, color: '#d97706' }}>{anomalyStats?.bySeverity?.majeur ?? '-'}</b>
             <p className="small">Majeures</p>
           </div>
           <div className="card">
-            <b style={{ fontSize: 24, color: '#15803d' }}>{dbAnomalies.filter(a => a.status === 'ouverte').length}</b>
+            <b style={{ fontSize: 24, color: '#15803d' }}>{anomalyStats?.byStatus?.ouverte ?? '-'}</b>
             <p className="small">À traiter</p>
           </div>
         </div>
@@ -571,7 +587,7 @@ function Settings() {
 }
 
 function RecordModal({ row, onClose }: { row: Row; onClose: () => void }) {
-  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Détail enregistrement</h3><p className="small">Statut calculé : {row._audit?.status} / score {row._audit?.score}/100</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div>
+  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Détail enregistrement</h3><p className="small">Statut d'audit : {row._audit?.status} / score {row._audit?.score}/100</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div>
     
     {/* Section Anomalies */}
     <div className="card" style={{ marginBottom: 16 }}>
