@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import { useRouter } from 'next/navigation';
+import { ROLE_PERMISSIONS, USER_ROLES, canAccessModule, hasPermission, type AuthUser, type Permission, type UserRole } from '@/lib/auth';
 import { MODULES, NAV_ITEMS, type AuditModuleId } from '@/lib/modules';
 
 type AnomalyDetail = {
@@ -38,6 +40,16 @@ type Anomaly = {
   dueDate: string | null;
 };
 
+type AppUser = {
+  id: number;
+  username: string;
+  email: string;
+  fullName: string;
+  role: UserRole;
+  department: string | null;
+  isActive: boolean;
+};
+
 const connectedModules = MODULES.filter((m) => m.table);
 
 function formatAmount(v: unknown) {
@@ -73,7 +85,189 @@ function bestReference(row: Row) {
   return '-';
 }
 
+function columnLabel(column: string) {
+  const labels: Record<string, string> = {
+    accounting_date: 'Date comptable',
+    entry_date: 'Date écriture',
+    validation_date: 'Date validation',
+    due_date: 'Date échéance',
+    invoice_date: 'Date facture',
+    payment_date: 'Date paiement',
+    movement_date: 'Date mouvement',
+    order_date: 'Date commande',
+    receipt_date: 'Date réception',
+    journal_code: 'Journal',
+    entry_number: 'N° écriture',
+    entry_line_id: 'ID ligne',
+    account_code: 'Compte',
+    account_label: 'Libellé compte',
+    third_party_name: 'Tiers',
+    supplier_name: 'Fournisseur',
+    customer_name: 'Client',
+    debit_amount: 'Débit',
+    credit_amount: 'Crédit',
+    amount: 'Montant',
+    amount_ht: 'Montant HT',
+    amount_ttc: 'Montant TTC',
+    tax_amount: 'TVA',
+    payment_amount: 'Montant payé',
+    currency: 'Devise',
+    invoice_number: 'N° facture',
+    supplier_invoice_ref: 'Réf. fournisseur',
+    payment_number: 'N° paiement',
+    reference: 'Référence',
+    company_code: 'Société',
+    site_code: 'Site',
+    bank_account_code: 'Compte bancaire',
+    bank_name: 'Banque',
+    supplier_code: 'Code fournisseur',
+    supplier_short_name: 'Nom court',
+    supplier_category: 'Catégorie',
+    status: 'Statut',
+    cash_account_code: 'Code caisse',
+    cash_label: 'Caisse',
+    current_balance: 'Solde actuel',
+    opening_balance: 'Solde initial',
+    responsible_user_name: 'Responsable',
+    is_active: 'Actif',
+    document_number: 'N° document',
+    suspense_category: 'Catégorie attente',
+    balance_amount: 'Solde',
+    age_days: 'Âge',
+    regularization_status: 'Régularisation',
+    advance_date: 'Date avance',
+    advance_type: 'Type avance',
+    outstanding_amount: 'Reste dû',
+    regularized_amount: 'Régularisé',
+    regularized_percent: '% régularisé',
+    declaration_period: 'Période',
+    tax_type: 'Type taxe',
+    tax_subtype: 'Sous-type taxe',
+    tax_account_code: 'Compte taxe',
+    tax_account_label: 'Libellé taxe',
+    nb_lines: 'Nb lignes',
+    nb_entries: 'Nb écritures',
+    calculated_base_sage: 'Base calculée',
+    calculated_tax_sage: 'Taxe calculée',
+    declared_base: 'Base déclarée',
+    declared_tax: 'Taxe déclarée',
+    difference_amount: 'Écart',
+    declaration_status: 'Statut déclaration',
+    beneficiary_name: 'Bénéficiaire',
+    direction_label: 'Sens',
+    operation_type: 'Type opération',
+    rib_identifier: 'Identifiant RIB',
+    iban: 'IBAN',
+    bic: 'BIC',
+    is_default_rib: 'RIB par défaut',
+    pr_number: 'N° demande',
+    pr_date: 'Date demande',
+    need_date: 'Date besoin',
+    requester_name: 'Demandeur',
+    facility_code: 'Site',
+    item_designation: 'Article',
+    quantity_requested: 'Quantité',
+    unit_price: 'Prix unitaire',
+    line_amount: 'Montant ligne',
+    po_number: 'N° commande',
+    buyer_name: 'Acheteur',
+    total_amount: 'Montant total',
+    order_status: 'Statut commande',
+    expected_delivery_date: 'Livraison prévue',
+    receipt_number: 'N° réception',
+    delivery_note_date: 'Date BL',
+    supplier_delivery_note: 'BL fournisseur',
+    quantity_received_stu: 'Qté reçue',
+    quantity_accepted_stu: 'Qté acceptée',
+    conformity_percentage: 'Conformité',
+    quality_status: 'Statut qualité',
+    taxable_base: 'Base taxable',
+    tax_rate_calculated: 'Taux calculé',
+    third_party_code: 'Code tiers',
+    chart_of_accounts: 'Plan comptable',
+    account_class: 'Classe',
+    account_type: 'Type compte',
+    account_sub_type: 'Sous-type compte',
+    is_sensitive: 'Sensible',
+    is_suspense_account: 'Compte attente',
+    code: 'Code',
+    name: 'Nom',
+    shortname: 'Nom court',
+    user_code: 'Code utilisateur',
+    user_name: 'Utilisateur',
+    email: 'Email',
+    department_code: 'Département',
+    profile_function: 'Fonction',
+    approval_level: 'Niveau validation',
+    connection_status: 'Connexion',
+    linked_document_date: 'Date document',
+    document_type: 'Type document',
+    source_module: 'Module source',
+    file_name: 'Fichier',
+    linked_document_number: 'N° document lié',
+    linked_invoice_number: 'N° facture liée',
+    linked_payment_number: 'N° paiement lié',
+    linked_amount: 'Montant lié',
+    linked_third_party_name: 'Tiers lié',
+    action_date: 'Date action',
+    table_name: 'Table',
+    record_id: 'ID enregistrement',
+    record_label: 'Libellé',
+    action_type: 'Action',
+    field_name: 'Champ',
+    old_value: 'Ancienne valeur',
+    new_value: 'Nouvelle valeur',
+    action_by_name: 'Auteur',
+    risk_flag: 'Risque'
+  };
+  return labels[column] || column.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+function getVisibleColumns(moduleId: string, columns: string[] = []) {
+  const priorityByModule: Record<string, string[]> = {
+    entries: ['accounting_date', 'journal_code', 'entry_number', 'account_code', 'third_party_name', 'debit_amount', 'credit_amount'],
+    supplierInvoices: ['invoice_date', 'invoice_number', 'supplier_name', 'amount_ht', 'tax_amount', 'amount_ttc', 'status'],
+    suppliers: ['supplier_code', 'supplier_name', 'supplier_category', 'status', 'site_code', 'country_code'],
+    supplierBankAccounts: ['supplier_code', 'supplier_name', 'bank_name', 'rib_identifier', 'iban', 'is_default_rib'],
+    orders: ['order_date', 'po_number', 'supplier_name', 'buyer_name', 'total_amount', 'order_status'],
+    receipts: ['receipt_date', 'receipt_number', 'po_number', 'supplier_name', 'quantity_received_stu', 'quality_status'],
+    customerInvoices: ['invoice_date', 'invoice_number', 'customer_name', 'amount_ht', 'tax_amount', 'amount_ttc', 'status'],
+    payments: ['payment_date', 'payment_number', 'supplier_name', 'payment_amount', 'currency', 'status'],
+    bankCash: ['movement_date', 'bank_account_code', 'bank_name', 'direction_label', 'operation_type', 'amount'],
+    cashAccounts: ['cash_account_code', 'cash_label', 'current_balance', 'opening_balance', 'responsible_user_name', 'is_active'],
+    advances: ['advance_date', 'advance_id', 'beneficiary_name', 'advance_type', 'amount', 'outstanding_amount', 'regularized_percent'],
+    suspenseAccounts: ['account_code', 'account_label', 'document_number', 'balance_amount', 'age_days', 'regularization_status'],
+    taxDeclarations: ['declaration_period', 'tax_type', 'tax_account_code', 'calculated_tax_sage', 'declared_tax', 'difference_amount', 'declaration_status'],
+    taxEntries: ['accounting_date', 'tax_entry_id', 'tax_type', 'account_code', 'taxable_base', 'tax_amount', 'tax_rate_calculated'],
+    bankAccounts: ['bank_account_code', 'bank_name', 'currency', 'current_balance', 'is_active', 'responsible_user_name'],
+    purchaseRequests: ['pr_date', 'pr_number', 'requester_name', 'item_designation', 'quantity_requested', 'line_amount', 'status'],
+    chartOfAccounts: ['account_code', 'account_label', 'account_class', 'account_type', 'is_sensitive', 'is_suspense_account'],
+    categories: ['code', 'name', 'status'],
+    users: ['user_code', 'user_name', 'email', 'department_code', 'profile_function', 'connection_status'],
+    justifications: ['linked_document_date', 'document_type', 'file_name', 'linked_amount', 'linked_third_party_name', 'status'],
+    auditTrail: ['action_date', 'table_name', 'record_label', 'action_type', 'field_name', 'action_by_name', 'risk_flag']
+  };
+  const priority = priorityByModule[moduleId] || columns.slice(0, 6);
+  const selected = priority.filter((column) => columns.includes(column));
+  if (selected.length >= 4) return selected;
+  return [...selected, ...columns.filter((column) => !selected.includes(column)).slice(0, 6 - selected.length)];
+}
+
+function formatCellValue(column: string, value: unknown) {
+  if (value === null || value === undefined || value === '') return '-';
+  if (/amount|debit|credit|balance|tax|price|solde|base/i.test(column)) return formatAmount(value);
+  if (/date|detected_at|created_at|updated_at/i.test(column) && typeof value === 'string') {
+    const date = new Date(value);
+    if (!Number.isNaN(date.getTime())) return date.toLocaleDateString('fr-FR');
+  }
+  if (typeof value === 'boolean') return value ? 'Oui' : 'Non';
+  return String(value);
+}
+
 export default function HomePage() {
+  const router = useRouter();
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authReady, setAuthReady] = useState(false);
   const [active, setActive] = useState<AuditModuleId>('dashboard');
   const [periodEnabled, setPeriodEnabled] = useState(false);
   const [startDate, setStartDate] = useState('');
@@ -101,6 +295,37 @@ export default function HomePage() {
   const [selectedAnomaly, setSelectedAnomaly] = useState<Anomaly | null>(null);
 
   const activeModule = connectedModules.find((m) => m.id === active);
+  const allowedNavItems = useMemo(() => NAV_ITEMS.filter(([id]) => canAccessModule(authUser, id)), [authUser]);
+
+  useEffect(() => {
+    const storedUser = window.localStorage.getItem('financeaudit_user');
+    if (!storedUser) {
+      router.replace('/login');
+      return;
+    }
+    try {
+      setAuthUser(JSON.parse(storedUser) as AuthUser);
+    } catch {
+      window.localStorage.removeItem('financeaudit_user');
+      router.replace('/login');
+      return;
+    } finally {
+      setAuthReady(true);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    if (!authUser) return;
+    if (!canAccessModule(authUser, active)) {
+      const firstAllowed = allowedNavItems[0]?.[0] || 'dashboard';
+      setActive(firstAllowed);
+    }
+  }, [active, allowedNavItems, authUser]);
+
+  function logout() {
+    window.localStorage.removeItem('financeaudit_user');
+    router.replace('/login');
+  }
 
   const periodParams = useMemo(() => {
     const p = new URLSearchParams();
@@ -110,9 +335,11 @@ export default function HomePage() {
   }, [periodEnabled, startDate, endDate]);
 
   async function loadDashboard() {
+    console.log('[loadDashboard] Loading dashboard data');
     const p = new URLSearchParams(periodParams);
     const res = await fetch(`/api/dashboard?${p.toString()}`);
     const data = await res.json();
+    console.log('[loadDashboard] Dashboard data:', data);
     setDashboard(data);
   }
 
@@ -203,6 +430,13 @@ export default function HomePage() {
   }, [active, periodParams, currentPage, pageSize, colFilters, statusFilter, riskFilter]);
 
   useEffect(() => {
+    if (active === 'period' && periodEnabled) {
+      loadDashboard().catch((e) => setError(e.message));
+      if (activeModule) loadRecords(active);
+    }
+  }, [active, periodEnabled, startDate, endDate]);
+
+  useEffect(() => {
     if (active === 'anomalies') {
       loadAnomalies(1);
     }
@@ -223,6 +457,7 @@ export default function HomePage() {
   }, [records]);
 
   function showModule(id: AuditModuleId) {
+    if (!canAccessModule(authUser, id)) return;
     setActive(id);
     setSearch('');
     setStatusFilter('all');
@@ -232,6 +467,7 @@ export default function HomePage() {
   }
 
   function renderDashboard() {
+    const totalRows = dashboard?.moduleStats?.reduce((sum, m) => sum + m.total, 0) || 0;
     return (
       <>
         <div className="page-header">
@@ -239,21 +475,26 @@ export default function HomePage() {
             <h3>Tableau de bord</h3>
             <p>Vue globale connectée à PostgreSQL, schéma analytics. Les statistiques respectent la période d’analyse lorsque le filtre global est activé.</p>
           </div>
-          <button className="btn btn-primary" onClick={() => loadDashboard()}>Actualiser</button>
         </div>
-        <div className="grid grid-4">
-          <div className="card kpi-card"><h4>Tables analytics</h4><div className="value">{dashboard?.tables ?? '-'}</div><div className="note">Schéma PostgreSQL</div></div>
-          <div className="card kpi-card"><h4>Champs disponibles</h4><div className="value">{dashboard?.columns ?? '-'}</div><div className="note">Information schema</div></div>
-          <div className="card kpi-card"><h4>Lignes période</h4><div className="value">{dashboard?.totalRows?.toLocaleString('fr-FR') ?? '-'}</div><div className="note">Modules raccordés</div></div>
-          <div className="card kpi-card"><h4>Score module courant</h4><div className="value">{dashboardStats.score}</div><div className="note">Sur 100</div></div>
+        <div className="grid grid-3">
+          <div className="card">
+            <div className="card-title">Tables actives</div>
+            <b>{dashboard?.tables || 0}</b>
+            <p className="small">Tables avec données dans le schéma {dashboard?.schema || 'analytics'}.</p>
+          </div>
+          <div className="card">
+            <div className="card-title">Colonnes totales</div>
+            <b>{dashboard?.columns?.toLocaleString('fr-FR') || 0}</b>
+            <p className="small">Colonnes cumulées sur toutes les tables.</p>
+          </div>
+          <div className="card">
+            <div className="card-title">Lignes totales</div>
+            <b>{totalRows.toLocaleString('fr-FR')}</b>
+            <p className="small">Lignes cumulées sur tous les modules.</p>
+          </div>
         </div>
-        <div className="grid grid-3" style={{ marginTop: 16 }}>
-          <div className="card kpi-card"><h4>Conformes</h4><div className="value">{dashboardStats.conformes}</div><div className="note">Rubrique courante</div></div>
-          <div className="card kpi-card"><h4>À traiter</h4><div className="value">{dashboardStats.nonConformes}</div><div className="note">Surveiller / vérifier / anomalie</div></div>
-          <div className="card kpi-card"><h4>Risques critiques</h4><div className="value">{dashboardStats.critiques}</div><div className="note">Selon règles V1</div></div>
-        </div>
-        <div className="card" style={{ marginTop: 16 }}>
-          <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>Statistiques par rubrique</h4>
+        <div className="card">
+          <div className="card-title">Statistiques par module</div>
           <div className="table-wrap"><table><thead><tr><th>Rubrique</th><th>Table</th><th>Lignes</th></tr></thead><tbody>{dashboard?.moduleStats?.map((m) => <tr key={m.id}><td>{m.title}</td><td>{m.table}</td><td>{m.total.toLocaleString('fr-FR')}</td></tr>)}</tbody></table></div>
         </div>
       </>
@@ -263,16 +504,17 @@ export default function HomePage() {
   function renderPeriod() {
     return (
       <>
-        <div className="page-header"><div><h3>Période d’analyse</h3><p>Paramètre global pour limiter l’affichage des données et les statistiques du dashboard.</p></div></div>
+        <div className="page-header"><div><h3>Période d’analyse</h3><p>Filtrer les données par date de début et de fin pour l’analyse ciblée.</p></div></div>
         <div className="card">
           <div className="period-box">
             <label className="status-line"><input type="checkbox" checked={periodEnabled} onChange={(e) => setPeriodEnabled(e.target.checked)} /> Activer le filtre de période</label>
             <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
             <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} />
-            <button className="btn btn-primary" onClick={() => { loadDashboard(); if (activeModule) loadRecords(active); }}>Appliquer</button>
-            <button className="btn btn-secondary" onClick={() => { setPeriodEnabled(false); setStartDate(''); setEndDate(''); }}>Toutes les périodes</button>
+            <button className="btn btn-primary" onClick={() => { if (activeModule) loadRecords(active); }}>Appliquer</button>
+            <button className="btn btn-secondary" onClick={() => { setPeriodEnabled(false); setStartDate(''); setEndDate(''); if (activeModule) loadRecords(active); }}>Toutes les périodes</button>
           </div>
         </div>
+        {activeModule ? renderRecords() : <div className="card empty-state">Sélectionnez une rubrique pour afficher les données filtrées par période.</div>}
       </>
     );
   }
@@ -282,6 +524,8 @@ export default function HomePage() {
     const pagination = records?.pagination;
     const totalRows = pagination?.total ?? records?.rows?.length ?? 0;
     const currentRows = pagination ? records?.rows : filteredRows;
+    const visibleColumns = getVisibleColumns(active, records?.columns || []);
+    const hiddenColumnsCount = Math.max((records?.columns?.length || 0) - visibleColumns.length, 0);
 
     return (
       <>
@@ -289,8 +533,17 @@ export default function HomePage() {
 
         {/* Filters */}
         <div className="toolbar">
+          <label className="status-line" style={{ gap: 8 }}>
+            <input type="checkbox" checked={periodEnabled} onChange={(e) => setPeriodEnabled(e.target.checked)} />
+            <span>Filtrer par période</span>
+          </label>
+          {periodEnabled && (
+            <>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }} />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }} />
+            </>
+          )}
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Recherche..." />
-          <button className="btn btn-primary" onClick={() => { setCurrentPage(1); loadRecords(active); }}>Filtrer</button>
           <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}><option value="all">Tous les statuts</option><option>Conforme</option><option>À surveiller</option><option>À vérifier</option><option>Anomalie</option></select>
           <select value={riskFilter} onChange={(e) => setRiskFilter(e.target.value)}><option value="all">Tous les risques</option><option value="faible">Faible</option><option value="moyen">Moyen</option><option value="critique">Critique</option></select>
           <select value={pageSize} onChange={(e) => { setPageSize(Number(e.target.value)); setCurrentPage(1); }}>
@@ -301,6 +554,7 @@ export default function HomePage() {
             <option value={200}>200 lignes</option>
           </select>
           <span className="schema-pill">{currentRows?.length || 0} / {totalRows.toLocaleString('fr-FR')} lignes</span>
+          {hiddenColumnsCount > 0 && <span className="schema-pill">{hiddenColumnsCount} champs dans le détail</span>}
           <span className="schema-pill">Table : {records?.table || activeModule.table}</span>
         </div>
 
@@ -317,38 +571,7 @@ export default function HomePage() {
 
         {!loading && (
           <>
-            <div className="table-wrap"><table><thead><tr>{records?.columns?.map((c) => <th key={c}>{c}</th>)}<th>Statut analyse</th><th>Action</th></tr></thead><tbody>{currentRows?.map((r, idx) => <tr key={idx}>{records?.columns?.map((c) => <td key={c}>{String(r[c] ?? '')}</td>)}<td style={{ minWidth: 250 }}>
-              {r._audit ? (
-                <>
-                  <div style={{ marginBottom: 8 }}>{badge(r._audit.status, r._audit.status)} <span className="small" style={{ marginLeft: 8 }}>Score: {r._audit.score}/100</span></div>
-                  {r._audit.anomalies && r._audit.anomalies.length > 0 ? (
-                    <div style={{ fontSize: 12, lineHeight: 1.4 }}>
-                      {r._audit.anomalies.slice(0, 2).map((a, i) => (
-                        <div key={i} style={{ 
-                          padding: '4px 8px', 
-                          marginBottom: 4, 
-                          borderRadius: 4, 
-                          background: a.severity === 'critique' ? '#fee2e2' : a.severity === 'majeur' ? '#fef3c7' : '#e0f2fe',
-                          borderLeft: `3px solid ${a.severity === 'critique' ? '#dc2626' : a.severity === 'majeur' ? '#d97706' : '#0284c7'}`
-                        }}>
-                          <b style={{ color: a.severity === 'critique' ? '#991b1b' : a.severity === 'majeur' ? '#92400e' : '#0369a1' }}>
-                            {a.severity.toUpperCase()}:
-                          </b> {a.message}
-                          <div style={{ color: '#6b7280', marginTop: 2, fontSize: 11 }}>💡 {a.suggestion}</div>
-                        </div>
-                      ))}
-                      {r._audit.anomalies.length > 2 && (
-                        <div style={{ color: '#6b7280', fontSize: 11, marginTop: 4 }}>
-                          + {r._audit.anomalies.length - 2} autre(s) anomalie(s)...
-                        </div>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="small" style={{ color: '#15803d' }}>✓ Document conforme</div>
-                  )}
-                </>
-              ) : null}
-            </td><td><button className="btn btn-secondary btn-mini" onClick={() => setModalRow(r)}>Détail</button></td></tr>)}</tbody></table></div>
+            <div className="table-wrap table-wrap-compact"><table><thead><tr>{visibleColumns.map((c) => <th key={c}>{columnLabel(c)}</th>)}<th>Action</th></tr></thead><tbody>{currentRows?.map((r, idx) => <tr key={idx}>{visibleColumns.map((c) => <td key={c}>{formatCellValue(c, r[c])}</td>)}<td><button className="btn btn-secondary btn-mini" onClick={() => setModalRow(r)}>Détail</button></td></tr>)}</tbody></table></div>
 
             {/* Pagination Controls */}
             {pagination && pagination.totalPages > 1 && (
@@ -398,6 +621,17 @@ export default function HomePage() {
         
         {/* Filters */}
         <div className="toolbar" style={{ gap: 12, flexWrap: 'wrap', marginBottom: 16 }}>
+          <label className="status-line" style={{ gap: 8 }}>
+            <input type="checkbox" checked={periodEnabled} onChange={(e) => setPeriodEnabled(e.target.checked)} />
+            <span>Filtrer par période</span>
+          </label>
+          {periodEnabled && (
+            <>
+              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }} />
+              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={{ padding: '8px 12px', borderRadius: 6, border: '1px solid #d1d5db' }} />
+            </>
+          )}
+          
           <select 
             value={anomalyFilter.status} 
             onChange={(e) => setAnomalyFilter(f => ({ ...f, status: e.target.value }))}
@@ -556,10 +790,13 @@ export default function HomePage() {
   }
 
   function content() {
+    if (!authReady) return <div className="card empty-state">Vérification de la session...</div>;
+    if (!authUser) return null;
     if (active === 'dashboard') return renderDashboard();
+    if (active === 'users') return hasPermission(authUser, 'users:view') ? <UsersAdmin /> : <Forbidden />;
     if (active === 'period') return renderPeriod();
     if (active === 'anomalies') return renderAnomalies();
-    if (active === 'settings') return <Settings />;
+    if (active === 'settings') return hasPermission(authUser, 'settings:view') ? <Settings /> : <Forbidden />;
     if (active === 'reports') return <SimplePage title="Rapports" text="Rapports imprimables et exports PDF à connecter aux données filtrées." />;
     if (active === 'aiAgent') return <SimplePage title="Agent IA Audit" text="Dans cette version Next.js, l’agent utilise les anomalies calculées côté application. Une prochaine étape pourra connecter un vrai modèle IA." />;
     if (active === 'reconciliation') return <SimplePage title="Rapprochements" text="Module à raccorder aux tables banque/caisse, lettrage et pièces justificatives." />;
@@ -569,8 +806,8 @@ export default function HomePage() {
 
   return (
     <div className="app">
-      <aside className="sidebar"><div className="brand"><h1>FinanceAudit IA V1</h1><p>Audit Comptabilité & Finance<br />Miroir PostgreSQL analytics</p></div><nav className="nav">{NAV_ITEMS.map(([id, label]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => showModule(id)}>{label}</button>)}</nav></aside>
-      <main className="main"><header className="topbar"><div><h2>{NAV_ITEMS.find(([id]) => id === active)?.[1]}</h2><span>Entreprise : Multiprint / Groupe — connexion PostgreSQL distante via .env</span></div><div className="status-line"><span>Xavier</span><span className="badge badge-info">Administrateur</span></div></header><section className="content">{error && <div className="error">{error}</div>}{content()}</section></main>
+      <aside className="sidebar"><div className="brand"><h1>FinanceAudit IA V1</h1><p>Audit Comptabilité & Finance<br />Miroir PostgreSQL analytics</p></div><nav className="nav">{allowedNavItems.map(([id, label]) => <button key={id} className={active === id ? 'active' : ''} onClick={() => showModule(id)}>{label}</button>)}</nav></aside>
+      <main className="main"><header className="topbar"><div><h2>{NAV_ITEMS.find(([id]) => id === active)?.[1]}</h2><span>Entreprise : Multiprint / Groupe — connexion PostgreSQL distante via .env</span></div><div className="status-line"><span>{authUser?.fullName || 'Utilisateur'}</span><span className="badge badge-info">{authUser?.role || '-'}</span><button className="btn btn-secondary btn-mini" onClick={logout}>Déconnexion</button></div></header><section className="content">{error && <div className="error">{error}</div>}{content()}</section></main>
       {modalRow && <RecordModal row={modalRow} onClose={() => setModalRow(null)} />}
       {anomalyModal && <AnomalyModal anomaly={anomalyModal} onClose={() => setAnomalyModal(null)} />}
       {selectedAnomaly && <AnomalyDetailModal anomaly={selectedAnomaly} onClose={() => setSelectedAnomaly(null)} />}
@@ -582,68 +819,192 @@ function SimplePage({ title, text }: { title: string; text: string }) {
   return <><div className="page-header"><div><h3>{title}</h3><p>{text}</p></div></div><div className="card empty-state">Cette rubrique garde sa place dans l’architecture et pourra être enrichie étape par étape.</div></>;
 }
 
+function Forbidden() {
+  return <div className="card empty-state"><h3>Accès refusé</h3><p className="small">Votre rôle ne donne pas accès à cette rubrique.</p></div>;
+}
+
 function Settings() {
   return <><div className="page-header"><div><h3>Paramétrage</h3><p>Paramètres fonctionnels et seuils d’analyse. Les paramètres serveur sont dans .env.local.</p></div></div><div className="grid grid-3"><div className="card"><b>DATABASE_URL</b><p className="small">Connexion PostgreSQL distante.</p></div><div className="card"><b>DB_SCHEMA</b><p className="small">analytics</p></div><div className="card"><b>PGSSL</b><p className="small">true si la base impose SSL.</p></div></div></>;
 }
 
-function RecordModal({ row, onClose }: { row: Row; onClose: () => void }) {
-  return <div className="modal-backdrop"><div className="modal-card"><div className="modal-header"><div><h3>Détail enregistrement</h3><p className="small">Statut d'audit : {row._audit?.status} / score {row._audit?.score}/100</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div>
-    
-    {/* Section Anomalies */}
-    <div className="card" style={{ marginBottom: 16 }}>
-      <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>🔍 Analyse de conformité</h4>
-      {row._audit ? (
-        <>
-          <div style={{ marginBottom: 12 }}>
-            {badge(row._audit.status, row._audit.status)}
-            <span style={{ marginLeft: 12, fontWeight: 600, color: row._audit.risk === 'critique' ? '#dc2626' : row._audit.risk === 'moyen' ? '#d97706' : '#15803d' }}>
-              Risque: {row._audit.risk}
-            </span>
-            <span className="small" style={{ marginLeft: 12 }}>Score: {row._audit.score}/100</span>
-          </div>
-          
-          {row._audit.anomalies && row._audit.anomalies.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              {row._audit.anomalies.map((a, i) => (
-                <div key={i} style={{
-                  padding: '12px',
-                  borderRadius: 8,
-                  background: a.severity === 'critique' ? '#fee2e2' : a.severity === 'majeur' ? '#fef3c7' : '#e0f2fe',
-                  borderLeft: `4px solid ${a.severity === 'critique' ? '#dc2626' : a.severity === 'majeur' ? '#d97706' : '#0284c7'}`
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ 
-                      padding: '2px 8px', 
-                      borderRadius: 4, 
-                      fontSize: 11, 
-                      fontWeight: 600,
-                      background: a.severity === 'critique' ? '#fecaca' : a.severity === 'majeur' ? '#fde68a' : '#bae6fd',
-                      color: a.severity === 'critique' ? '#991b1b' : a.severity === 'majeur' ? '#92400e' : '#0369a1'
-                    }}>
-                      {a.severity.toUpperCase()}
-                    </span>
-                    <span style={{ fontSize: 12, color: '#6b7280' }}>{a.type}</span>
-                    {a.field && <span style={{ fontSize: 11, color: '#9ca3af' }}>Champ: {a.field}</span>}
-                  </div>
-                  <p style={{ margin: '4px 0', fontWeight: 500 }}>{a.message}</p>
-                  <p style={{ margin: 0, fontSize: 12, color: '#6b7280' }}>💡 <b>Action suggérée:</b> {a.suggestion}</p>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div style={{ padding: 16, background: '#f0fdf4', borderRadius: 8, color: '#15803d' }}>
-              ✓ Aucune anomalie détectée - Ce document est conforme aux règles de contrôle.
+function UsersAdmin() {
+  const [users, setUsers] = useState<AppUser[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [message, setMessage] = useState('');
+  const [error, setError] = useState('');
+
+  async function loadUsers() {
+    setLoading(true);
+    setError('');
+    try {
+      const response = await fetch('/api/users');
+      const data = await response.json();
+      if (!data.success) throw new Error(data.error || 'Erreur utilisateurs');
+      setUsers(data.data || []);
+    } catch {
+      setError('Impossible de charger les utilisateurs');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  async function changeRole(userId: number, role: UserRole) {
+    setMessage('');
+    setError('');
+    try {
+      const response = await fetch('/api/users', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id: userId, role })
+      });
+      const data = await response.json();
+      if (!response.ok || !data.success) throw new Error(data.error || 'Modification impossible');
+      setUsers((current) => current.map((user) => user.id === userId ? { ...user, role } : user));
+      setMessage('Rôle utilisateur mis à jour.');
+    } catch {
+      setError('Impossible de modifier le rôle utilisateur');
+    }
+  }
+
+  return (
+    <>
+      <div className="page-header"><div><h3>Utilisateurs, rôles et permissions</h3><p>Gérez les rôles des utilisateurs stockés en base et visualisez les permissions appliquées.</p></div></div>
+      {message && <div className="success-box">{message}</div>}
+      {error && <div className="error">{error}</div>}
+      <div className="grid grid-2">
+        <div className="card">
+          <div className="card-title">Utilisateurs actifs</div>
+          {loading ? <div className="empty-state">Chargement...</div> : (
+            <div className="table-wrap table-wrap-small">
+              <table><thead><tr><th>Utilisateur</th><th>Email</th><th>Département</th><th>Rôle</th></tr></thead><tbody>
+                {users.map((user) => <tr key={user.id}><td><b>{user.fullName}</b><br /><span className="small">@{user.username}</span></td><td>{user.email}</td><td>{user.department || '-'}</td><td><select value={user.role} onChange={(event) => changeRole(user.id, event.target.value as UserRole)}>{USER_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}</select></td></tr>)}
+              </tbody></table>
             </div>
           )}
-        </>
-      ) : (
-        <p className="small">Pas d'analyse disponible</p>
+        </div>
+        <div className="card">
+          <div className="card-title">Permissions par rôle</div>
+          <div className="permission-grid">
+            {USER_ROLES.map((role) => <div className="permission-card" key={role}><h4>{role}</h4>{ROLE_PERMISSIONS[role].map((permission: Permission) => <span key={permission} className="permission-pill">{permission}</span>)}</div>)}
+          </div>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function RecordModal({ row, onClose }: { row: Row; onClose: () => void }) {
+  const [n8nAnomalies, setN8nAnomalies] = useState<{ title: string; causes: string; solutions: string; description: string; severity: string }[]>([]);
+  const [n8nAnomaliesLoading, setN8nAnomaliesLoading] = useState(false);
+  const [n8nAnomaliesError, setN8nAnomaliesError] = useState('');
+
+  useEffect(() => {
+    async function loadAnomalies() {
+      console.log('[RecordModal] Loading anomalies for row:', row);
+      setN8nAnomaliesLoading(true);
+      setN8nAnomaliesError('');
+      try {
+        const res = await fetch('/api/n8n-anomalies', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(row),
+        });
+        const data = await res.json();
+        console.log('[RecordModal] Response status:', res.status);
+        console.log('[RecordModal] Response data:', data);
+        if (!res.ok) throw new Error(data.error || 'Erreur chargement anomalies n8n');
+        console.log('[RecordModal] Setting n8nAnomalies:', data.data);
+        console.log('[RecordModal] Number of anomalies:', data.data?.length || 0);
+        setN8nAnomalies(data.data || []);
+      } catch (e) {
+        console.error('[RecordModal] Error loading anomalies:', e);
+        setN8nAnomaliesError(e instanceof Error ? e.message : 'Erreur inconnue');
+        setN8nAnomalies([]);
+      } finally {
+        setN8nAnomaliesLoading(false);
+      }
+    }
+    loadAnomalies();
+  }, [row]);
+
+  const fields = Object.entries(row).filter(([k]) => !k.startsWith('_'));
+  const summaryFields = fields.filter(([k]) => /date|number|reference|invoice|payment|account|supplier|customer|third_party|amount|debit|credit|balance|status|code|name|label|description|type|category/i.test(k)).slice(0, 20);
+  const otherFields = fields.filter(([k]) => !summaryFields.some(([summaryKey]) => summaryKey === k));
+  return <div className="modal-backdrop" onClick={onClose}><div className="modal-card record-detail-modal" onClick={(e) => e.stopPropagation()}><div className="modal-header detail-modal-header"><div><h3>Détail enregistrement</h3><p className="small">Référence : {bestReference(row)} · Montant principal : {formatAmount(bestAmount(row))}</p></div><button className="btn btn-secondary btn-mini" onClick={onClose}>Fermer</button></div>
+    <div className="record-detail-body">
+      <div className="detail-summary">
+        <div className="detail-summary-card">
+          <span className="detail-label">Statut audit</span>
+          <div className="detail-value">{row._audit ? badge(row._audit.status, row._audit.status) : '-'}</div>
+        </div>
+        <div className="detail-summary-card">
+          <span className="detail-label">Risque</span>
+          <div className="detail-value">{row._audit ? badge(row._audit.risk, row._audit.risk) : '-'}</div>
+        </div>
+        <div className="detail-summary-card">
+          <span className="detail-label">Score</span>
+          <div className="detail-value">{row._audit ? `${row._audit.score}/100` : '-'}</div>
+        </div>
+        <div className="detail-summary-card">
+          <span className="detail-label">Anomalies</span>
+          <div className="detail-value">{row._audit?.anomalies?.length || 0}</div>
+        </div>
+      </div>
+      {n8nAnomaliesLoading && (
+        <div className="empty-state">
+          <div className="spinner"></div>
+          <p>Chargement des anomalies IA...</p>
+        </div>
       )}
+      {n8nAnomaliesError && <div className="error">{n8nAnomaliesError}</div>}
+      <section className="detail-section">
+        <div className="detail-section-title"><h4>Anomalies IA ({n8nAnomalies.length})</h4></div>
+        {n8nAnomalies.length > 0 ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+            {n8nAnomalies.map((anomaly, idx) => (
+              <div key={idx} style={{ padding: 16, borderRadius: 8, border: '1px solid var(--border)', background: '#fff' }}>
+                <h4 style={{ color: 'var(--danger)', marginBottom: 8 }}>{anomaly.title}</h4>
+                <p style={{ marginBottom: 12 }}>{anomaly.description}</p>
+                {anomaly.causes && (
+                  <div style={{ marginBottom: 12 }}>
+                    <strong>Causes :</strong>
+                    <p style={{ marginTop: 4 }}>{anomaly.causes}</p>
+                  </div>
+                )}
+                {anomaly.solutions && (
+                  <div>
+                    <strong>Solutions :</strong>
+                    <p style={{ marginTop: 4 }}>{anomaly.solutions}</p>
+                  </div>
+                )}
+                {anomaly.severity && (
+                  <div style={{ marginTop: 8 }}>
+                    <strong>Sévérité :</strong>
+                    <span style={{ marginLeft: 8, padding: '2px 8px', borderRadius: 4, background: 'var(--danger)', color: '#fff' }}>{anomaly.severity}</span>
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="empty-state">Aucune anomalie détectée</div>
+        )}
+      </section>
+      <section className="detail-section">
+        <div className="detail-section-title"><h4>Informations principales</h4><span>{summaryFields.length} champs</span></div>
+        <div className="detail-field-grid">{summaryFields.map(([k, v]) => <div className="detail-field" key={k}><span>{columnLabel(k)}</span><strong>{formatCellValue(k, v)}</strong></div>)}</div>
+      </section>
+      <section className="detail-section">
+        <div className="detail-section-title"><h4>Autres informations</h4><span>{otherFields.length} champs</span></div>
+        <div className="detail-field-grid detail-field-grid-compact">{otherFields.map(([k, v]) => <div className="detail-field" key={k}><span>{columnLabel(k)}</span><strong>{formatCellValue(k, v)}</strong></div>)}</div>
+      </section>
     </div>
-    
-    {/* Données brutes */}
-    <h4 style={{ color: 'var(--primary)', marginBottom: 12 }}>📋 Données de l'enregistrement</h4>
-    <div className="grid grid-3">{Object.entries(row).filter(([k]) => !k.startsWith('_')).map(([k, v]) => <div className="card" key={k}><b>{k}</b><p className="small">{String(v ?? '')}</p></div>)}</div>
   </div></div>;
 }
 

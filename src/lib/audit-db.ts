@@ -80,6 +80,17 @@ export interface UserRecord {
   role: 'Administrateur' | 'Auditeur' | 'Comptable' | 'Lecteur';
   department: string | null;
   isActive: boolean;
+  passwordHash?: string | null;
+  password?: string | null;
+}
+
+export interface CreateUserInput {
+  username: string;
+  email: string;
+  fullName: string;
+  role: UserRecord['role'];
+  department: string | null;
+  password: string;
 }
 
 // ============================================
@@ -226,15 +237,96 @@ export async function getUsers(): Promise<UserRecord[]> {
   const result = await queryAudit(
     'SELECT id, username, email, full_name, role, department, is_active FROM audit_management.users WHERE is_active = true'
   );
-  return result.rows as UserRecord[];
+  return result.rows.map((row: Record<string, unknown>) => ({
+    id: Number(row.id),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.username || ''),
+    role: String(row.role || 'Lecteur') as UserRecord['role'],
+    department: row.department ? String(row.department) : null,
+    isActive: Boolean(row.is_active)
+  }));
 }
 
 export async function getUserByUsername(username: string): Promise<UserRecord | null> {
   const result = await queryAudit(
-    'SELECT id, username, email, full_name, role, department, is_active FROM audit_management.users WHERE username = $1',
+    'SELECT * FROM audit_management.users WHERE username = $1',
     [username]
   );
-  return result.rows[0] as UserRecord || null;
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.fullName || row.username || ''),
+    role: String(row.role || 'Lecteur') as UserRecord['role'],
+    department: row.department ? String(row.department) : null,
+    isActive: Boolean(row.is_active ?? row.isActive),
+    passwordHash: row.password_hash ? String(row.password_hash) : null,
+    password: row.password ? String(row.password) : null
+  };
+}
+
+export async function getUserByEmail(email: string): Promise<UserRecord | null> {
+  const result = await queryAudit(
+    'SELECT * FROM audit_management.users WHERE email = $1',
+    [email]
+  );
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) return null;
+  return {
+    id: Number(row.id),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.fullName || row.username || ''),
+    role: String(row.role || 'Lecteur') as UserRecord['role'],
+    department: row.department ? String(row.department) : null,
+    isActive: Boolean(row.is_active ?? row.isActive),
+    passwordHash: row.password_hash ? String(row.password_hash) : null,
+    password: row.password ? String(row.password) : null
+  };
+}
+
+export async function createUser(data: CreateUserInput): Promise<UserRecord> {
+  const result = await queryAudit(
+    `INSERT INTO audit_management.users (username, email, full_name, role, department, is_active, password_hash)
+     VALUES ($1, $2, $3, $4, $5, true, $6)
+     RETURNING *`,
+    [data.username, data.email, data.fullName, data.role, data.department, data.password]
+  );
+  const row = result.rows[0] as Record<string, unknown>;
+  return {
+    id: Number(row.id),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.username || ''),
+    role: String(row.role || 'Lecteur') as UserRecord['role'],
+    department: row.department ? String(row.department) : null,
+    isActive: Boolean(row.is_active),
+    passwordHash: row.password_hash ? String(row.password_hash) : null,
+    password: row.password ? String(row.password) : null
+  };
+}
+
+export async function updateUserRole(id: number, role: UserRecord['role']): Promise<UserRecord> {
+  const result = await queryAudit(
+    'UPDATE audit_management.users SET role = $1 WHERE id = $2 RETURNING *',
+    [role, id]
+  );
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+  if (!row) throw new Error('Utilisateur introuvable');
+  return {
+    id: Number(row.id),
+    username: String(row.username || ''),
+    email: String(row.email || ''),
+    fullName: String(row.full_name || row.username || ''),
+    role: String(row.role || 'Lecteur') as UserRecord['role'],
+    department: row.department ? String(row.department) : null,
+    isActive: Boolean(row.is_active),
+    passwordHash: row.password_hash ? String(row.password_hash) : null,
+    password: row.password ? String(row.password) : null
+  };
 }
 
 // ============================================

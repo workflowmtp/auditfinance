@@ -51,9 +51,10 @@ export async function GET(req: NextRequest) {
         warning: `Table ${schema}.${config.table} non trouvée dans la base de données`
       });
     }
+    const allColumns = url.searchParams.get('allColumns') === 'true';
     const selected = config.displayColumns.filter((c) => cols.has(c));
     const fallbackCols = Array.from(cols).slice(0, 12);
-    const finalCols = selected.length ? selected : fallbackCols;
+    const finalCols = Array.from(cols);
     const dateCol = config.dateColumns.find((c) => cols.has(c));
     const searchCols = config.searchColumns.filter((c) => cols.has(c));
 
@@ -67,12 +68,12 @@ export async function GET(req: NextRequest) {
 
     if (startDate && dateCol) {
       params.push(startDate);
-      where.push(`s."${dateCol}"::date >= $${params.length}::date`);
+      where.push(`to_date(s."${dateCol}"::text, 'YYYY-MM-DD') >= to_date($${params.length}, 'YYYY-MM-DD')`);
     }
 
     if (endDate && dateCol) {
       params.push(endDate);
-      where.push(`s."${dateCol}"::date <= $${params.length}::date`);
+      where.push(`to_date(s."${dateCol}"::text, 'YYYY-MM-DD') <= to_date($${params.length}, 'YYYY-MM-DD')`);
     }
 
     // Column filters

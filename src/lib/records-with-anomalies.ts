@@ -102,16 +102,20 @@ export function getSourceRecordIdExpr(moduleId: string, alias = 's'): string {
 function getSourceRecordIdMatchCondition(moduleId: string, alias = 's'): string {
   const expr = getSourceRecordIdExpr(moduleId, alias);
   switch (moduleId) {
+    case 'entries':
+      return `(source_record_id = ${alias}."entry_line_id"::text OR (source_record_id = ${alias}."entry_number"::text AND ${alias}."__entry_rank" = 1))`;
     case 'supplierBankAccounts':
       // Anomalie sur un RIB précis (supplier_code:rib_identifier)
       // OU anomalie au niveau fournisseur (supplier_code seul)
-      return `source_record_id LIKE ${expr} OR source_record_id LIKE ${alias}."supplier_code"::text`;
+      return `(source_record_id = ${expr} OR source_record_id = ${alias}."supplier_code"::text)`;
+    case 'receipts':
+      return `(source_record_id = ${alias}."receipt_number"::text OR source_record_id = ${expr})`;
     case 'taxDeclarations':
       // Anomalie sur un compte fiscal (tax_account_code)
       // OU anomalie sur une période spécifique (format: periode-type-tax_account_code)
-      return `source_record_id LIKE ${expr} OR source_record_id LIKE '%-' || ${alias}."tax_account_code"::text`;
+      return `(source_record_id = ${expr} OR source_record_id LIKE '%-' || ${alias}."tax_account_code"::text)`;
     default:
-      return `source_record_id LIKE ${expr}`;
+      return `source_record_id = ${expr}`;
   }
 }
 
@@ -216,20 +220,25 @@ export async function getRecordsWithAnomalies(
 
   // Condition de matching pour le LATERAL JOIN (prend en charge les cas spéciaux)
   const matchCondition = getSourceRecordIdMatchCondition(options.moduleId);
+  const sourceFrom = options.moduleId === 'entries'
+    ? `(SELECT *, ROW_NUMBER() OVER (PARTITION BY "entry_number" ORDER BY "entry_line_id" NULLS LAST, "account_code" NULLS LAST) AS "__entry_rank" FROM ${quoteIdent(options.schema)}.${quoteIdent(options.table)}) s`
+    : `${quoteIdent(options.schema)}.${quoteIdent(options.table)} s`;
 
   // 1. Count total (alias s pour que les clauses WHERE avec s."col" fonctionnent)
   const countSchemaIdx = whereParams.length + 1;
-  const countSql = `SELECT COUNT(*)::text AS total FROM ${quoteIdent(options.schema)}.${quoteIdent(options.table)} s LEFT JOIN LATERAL (
+  const countTableIdx = whereParams.length + 2;
+  const countSql = `SELECT COUNT(*)::text AS total FROM ${sourceFrom} LEFT JOIN LATERAL (
       SELECT count(*) AS anomalies_count,
         (array_agg(severity ORDER BY
           CASE severity WHEN 'critique' THEN 3 WHEN 'majeur' THEN 2 WHEN 'mineur' THEN 1 ELSE 0 END DESC
         ))[1] AS max_severity
       FROM audit_management.anomalies
       WHERE source_schema = $${countSchemaIdx}
+        AND source_table = $${countTableIdx}
         AND ${matchCondition}
         AND source_record_id NOT LIKE 'GLOBAL-%'
     ) a ON true ${whereClause}`;
-  const countRes = await query(countSql, [...whereParams, options.schema]);
+  const countRes = await query(countSql, [...whereParams, options.schema, options.table]);
   const total = Number((countRes.rows[0] as { total: string })?.total || 0);
 
   // 2. Main query with LATERAL JOIN
@@ -243,9 +252,10 @@ export async function getRecordsWithAnomalies(
 
   // Paramètres numérotés : whereParams (0..N-1), schema (N), limit (N+1), offset (N+2)
   const schemaIdx = whereParams.length + 1;
-  const limitIdx = whereParams.length + 2;
-  const offsetIdx = whereParams.length + 3;
-  const allParams = [...whereParams, options.schema, limit, offset];
+  const tableIdx = whereParams.length + 2;
+  const limitIdx = whereParams.length + 3;
+  const offsetIdx = whereParams.length + 4;
+  const allParams = [...whereParams, options.schema, options.table, limit, offset];
 
   const sql = `
     SELECT
@@ -253,7 +263,7 @@ export async function getRecordsWithAnomalies(
       COALESCE(a.anomalies, '[]'::jsonb) AS anomalies,
       COALESCE(a.anomalies_count, 0)::int AS anomalies_count,
       a.max_severity
-    FROM ${quoteIdent(options.schema)}.${quoteIdent(options.table)} s
+    FROM ${sourceFrom}
     LEFT JOIN LATERAL (
       SELECT
         jsonb_agg(jsonb_build_object(
@@ -277,6 +287,7 @@ export async function getRecordsWithAnomalies(
         ))[1] AS max_severity
       FROM audit_management.anomalies
       WHERE source_schema = $${schemaIdx}
+        AND source_table = $${tableIdx}
         AND ${matchCondition}
         AND source_record_id NOT LIKE 'GLOBAL-%'
     ) a ON true
@@ -299,6 +310,24 @@ export async function getRecordsWithAnomalies(
       max_severity: (row.max_severity as string | null) || null
     };
   }) as RecordWithAnomalies[];
+
+  if (options.moduleId === 'entries') {
+    const entriesAnomaliesResult = {
+      total,
+      returnedRows: rows.length,
+      rowsWithAnomalies: rows.filter((row) => row.anomalies_count > 0).length,
+      result: rows.map((row) => ({
+        entry_line_id: row.entry_line_id,
+        entry_number: row.entry_number,
+        anomalies_count: row.anomalies_count,
+        max_severity: row.max_severity,
+        anomalies: row.anomalies
+      }))
+    };
+    console.error('================ ENTRIES ANOMALIES RESULT ================');
+    console.error(JSON.stringify(entriesAnomaliesResult, null, 2));
+    console.error('==========================================================');
+  }
 
   return { rows, total };
 }
