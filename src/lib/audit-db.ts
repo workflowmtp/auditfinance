@@ -330,6 +330,49 @@ export async function updateUserRole(id: number, role: UserRecord['role']): Prom
 }
 
 // ============================================
+// ROLE PERMISSIONS
+// ============================================
+
+let rolePermissionsTableReady = false;
+
+async function ensureRolePermissionsTable(): Promise<void> {
+  if (rolePermissionsTableReady) return;
+  await queryAudit(
+    `CREATE TABLE IF NOT EXISTS audit_management.role_permissions (
+       role TEXT PRIMARY KEY,
+       permissions JSONB NOT NULL DEFAULT '[]'::jsonb,
+       updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+     )`
+  );
+  rolePermissionsTableReady = true;
+}
+
+export async function getRolePermissions(): Promise<Record<string, string[]>> {
+  await ensureRolePermissionsTable();
+  const result = await queryAudit('SELECT role, permissions FROM audit_management.role_permissions');
+  const map: Record<string, string[]> = {};
+  for (const row of result.rows as Array<{ role: string; permissions: unknown }>) {
+    const perms = Array.isArray(row.permissions)
+      ? (row.permissions as string[])
+      : typeof row.permissions === 'string'
+        ? (JSON.parse(row.permissions) as string[])
+        : [];
+    map[row.role] = perms;
+  }
+  return map;
+}
+
+export async function setRolePermissions(role: string, permissions: string[]): Promise<void> {
+  await ensureRolePermissionsTable();
+  await queryAudit(
+    `INSERT INTO audit_management.role_permissions (role, permissions, updated_at)
+     VALUES ($1, $2::jsonb, NOW())
+     ON CONFLICT (role) DO UPDATE SET permissions = EXCLUDED.permissions, updated_at = NOW()`,
+    [role, JSON.stringify(permissions)]
+  );
+}
+
+// ============================================
 // STATISTIQUES
 // ============================================
 

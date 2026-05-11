@@ -832,6 +832,13 @@ function UsersAdmin() {
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
+  const [search, setSearch] = useState('');
+  const [roleFilter, setRoleFilter] = useState<'all' | UserRole>('all');
+  const [selectedUser, setSelectedUser] = useState<AppUser | null>(null);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [rolePerms, setRolePerms] = useState<Record<UserRole, Permission[]>>(ROLE_PERMISSIONS);
+  const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
+  const [savingRole, setSavingRole] = useState<UserRole | null>(null);
 
   async function loadUsers() {
     setLoading(true);
@@ -848,13 +855,55 @@ function UsersAdmin() {
     }
   }
 
+  async function loadRolePermissions() {
+    try {
+      const res = await fetch('/api/roles/permissions');
+      const data = await res.json();
+      if (data.success) {
+        setRolePerms(data.data);
+        setAllPermissions(data.allPermissions || []);
+      }
+    } catch {
+      // fallback to static
+    }
+  }
+
+  async function togglePermission(role: UserRole, permission: Permission) {
+    const current = rolePerms[role] || [];
+    const next = current.includes(permission)
+      ? current.filter((p) => p !== permission)
+      : [...current, permission];
+    setRolePerms((prev) => ({ ...prev, [role]: next }));
+    setSavingRole(role);
+    setMessage('');
+    setError('');
+    try {
+      const res = await fetch('/api/roles/permissions', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ role, permissions: next })
+      });
+      const data = await res.json();
+      if (!res.ok || !data.success) throw new Error(data.error || 'Erreur');
+      setMessage(`Permissions du rôle "${role}" mises à jour`);
+      setTimeout(() => setMessage(''), 3000);
+    } catch {
+      setError('Impossible de mettre à jour les permissions');
+      setRolePerms((prev) => ({ ...prev, [role]: current }));
+    } finally {
+      setSavingRole(null);
+    }
+  }
+
   useEffect(() => {
     loadUsers();
+    loadRolePermissions();
   }, []);
 
   async function changeRole(userId: number, role: UserRole) {
     setMessage('');
     setError('');
+    setSavingId(userId);
     try {
       const response = await fetch('/api/users', {
         method: 'PATCH',
@@ -864,35 +913,252 @@ function UsersAdmin() {
       const data = await response.json();
       if (!response.ok || !data.success) throw new Error(data.error || 'Modification impossible');
       setUsers((current) => current.map((user) => user.id === userId ? { ...user, role } : user));
-      setMessage('Rôle utilisateur mis à jour.');
+      setSelectedUser((current) => current && current.id === userId ? { ...current, role } : current);
+      setMessage(`Rôle mis à jour : ${role}`);
+      setTimeout(() => setMessage(''), 3000);
     } catch {
       setError('Impossible de modifier le rôle utilisateur');
+    } finally {
+      setSavingId(null);
     }
+  }
+
+  const filteredUsers = users.filter((u) => {
+    if (roleFilter !== 'all' && u.role !== roleFilter) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        u.fullName.toLowerCase().includes(q) ||
+        u.username.toLowerCase().includes(q) ||
+        u.email.toLowerCase().includes(q) ||
+        (u.department || '').toLowerCase().includes(q)
+      );
+    }
+    return true;
+  });
+
+  const roleCounts = USER_ROLES.reduce((acc, role) => {
+    acc[role] = users.filter((u) => u.role === role).length;
+    return acc;
+  }, {} as Record<UserRole, number>);
+
+  const roleColors: Record<UserRole, string> = {
+    Administrateur: '#dc2626',
+    Auditeur: '#ea580c',
+    Comptable: '#0ea5e9',
+    Lecteur: '#6b7280'
+  };
+
+  function getInitials(name: string) {
+    return name.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
   }
 
   return (
     <>
-      <div className="page-header"><div><h3>Utilisateurs, rôles et permissions</h3><p>Gérez les rôles des utilisateurs stockés en base et visualisez les permissions appliquées.</p></div></div>
-      {message && <div className="success-box">{message}</div>}
-      {error && <div className="error">{error}</div>}
-      <div className="grid grid-2">
-        <div className="card">
-          <div className="card-title">Utilisateurs actifs</div>
-          {loading ? <div className="empty-state">Chargement...</div> : (
-            <div className="table-wrap table-wrap-small">
-              <table><thead><tr><th>Utilisateur</th><th>Email</th><th>Département</th><th>Rôle</th></tr></thead><tbody>
-                {users.map((user) => <tr key={user.id}><td><b>{user.fullName}</b><br /><span className="small">@{user.username}</span></td><td>{user.email}</td><td>{user.department || '-'}</td><td><select value={user.role} onChange={(event) => changeRole(user.id, event.target.value as UserRole)}>{USER_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}</select></td></tr>)}
-              </tbody></table>
-            </div>
-          )}
-        </div>
-        <div className="card">
-          <div className="card-title">Permissions par rôle</div>
-          <div className="permission-grid">
-            {USER_ROLES.map((role) => <div className="permission-card" key={role}><h4>{role}</h4>{ROLE_PERMISSIONS[role].map((permission: Permission) => <span key={permission} className="permission-pill">{permission}</span>)}</div>)}
-          </div>
+      <div className="page-header">
+        <div>
+          <h3>Utilisateurs, rôles et permissions</h3>
+          <p>Gérez les rôles des utilisateurs et visualisez les permissions appliquées à chaque profil.</p>
         </div>
       </div>
+      {message && <div className="success-box">{message}</div>}
+      {error && <div className="error">{error}</div>}
+
+      <div className="grid grid-3">
+        <div className="card">
+          <div className="card-title">Total utilisateurs</div>
+          <b>{users.length}</b>
+          <p className="small">Utilisateurs actifs en base.</p>
+        </div>
+        <div className="card">
+          <div className="card-title">Administrateurs</div>
+          <b style={{ color: roleColors.Administrateur }}>{roleCounts.Administrateur || 0}</b>
+          <p className="small">Accès complet à la plateforme.</p>
+        </div>
+        <div className="card">
+          <div className="card-title">Auditeurs</div>
+          <b style={{ color: roleColors.Auditeur }}>{roleCounts.Auditeur || 0}</b>
+          <p className="small">Gestion et revue des anomalies.</p>
+        </div>
+      </div>
+
+      <div className="card">
+        <div className="card-title">Liste des utilisateurs</div>
+        <div style={{ display: 'flex', gap: 12, marginBottom: 16, flexWrap: 'wrap' }}>
+          <input
+            type="text"
+            placeholder="Rechercher un utilisateur..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ flex: 1, minWidth: 200, padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+          />
+          <select
+            value={roleFilter}
+            onChange={(e) => setRoleFilter(e.target.value as 'all' | UserRole)}
+            style={{ padding: 8, borderRadius: 6, border: '1px solid var(--border)' }}
+          >
+            <option value="all">Tous les rôles</option>
+            {USER_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+          </select>
+        </div>
+
+        {loading ? (
+          <div className="empty-state"><div className="spinner"></div><p>Chargement des utilisateurs...</p></div>
+        ) : filteredUsers.length === 0 ? (
+          <div className="empty-state">Aucun utilisateur trouvé</div>
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Utilisateur</th>
+                  <th>Email</th>
+                  <th>Département</th>
+                  <th>Rôle</th>
+                  <th>Statut</th>
+                  <th style={{ textAlign: 'right' }}>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredUsers.map((user) => (
+                  <tr key={user.id}>
+                    <td>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                        <div style={{
+                          width: 36, height: 36, borderRadius: '50%',
+                          background: roleColors[user.role],
+                          color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                          fontWeight: 600, fontSize: 13
+                        }}>{getInitials(user.fullName)}</div>
+                        <div>
+                          <b>{user.fullName}</b>
+                          <br />
+                          <span className="small">@{user.username}</span>
+                        </div>
+                      </div>
+                    </td>
+                    <td>{user.email}</td>
+                    <td>{user.department || '-'}</td>
+                    <td>
+                      <select
+                        value={user.role}
+                        disabled={savingId === user.id}
+                        onChange={(event) => changeRole(user.id, event.target.value as UserRole)}
+                        style={{
+                          padding: '4px 8px',
+                          borderRadius: 4,
+                          border: `2px solid ${roleColors[user.role]}`,
+                          color: roleColors[user.role],
+                          fontWeight: 600,
+                          background: '#fff'
+                        }}
+                      >
+                        {USER_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+                      </select>
+                      {savingId === user.id && <span className="small" style={{ marginLeft: 8 }}>Enregistrement...</span>}
+                    </td>
+                    <td>
+                      <span style={{
+                        padding: '2px 8px', borderRadius: 4,
+                        background: user.isActive ? '#10b981' : '#6b7280',
+                        color: '#fff', fontSize: 12
+                      }}>{user.isActive ? 'Actif' : 'Inactif'}</span>
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      <button className="btn btn-secondary btn-mini" onClick={() => setSelectedUser(user)}>Permissions</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      <div className="card">
+        <div className="card-title">Matrice des permissions par rôle</div>
+        <p className="small" style={{ marginBottom: 12 }}>
+          Cochez ou décochez les permissions pour ajuster les droits accordés à chaque rôle. Les changements sont enregistrés automatiquement.
+        </p>
+        <div className="permission-grid">
+          {USER_ROLES.map((role) => {
+            const perms = rolePerms[role] || [];
+            const list = (allPermissions.length ? allPermissions : ROLE_PERMISSIONS[role]) as Permission[];
+            return (
+              <div className="permission-card" key={role} style={{ borderTop: `4px solid ${roleColors[role]}` }}>
+                <h4 style={{ color: roleColors[role] }}>
+                  {role}
+                  {savingRole === role && <span className="small" style={{ marginLeft: 8, color: 'var(--muted)', fontWeight: 400 }}>Enregistrement...</span>}
+                </h4>
+                <p className="small" style={{ marginBottom: 8 }}>{perms.length} / {list.length} permission(s)</p>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {list.map((permission) => {
+                    const checked = perms.includes(permission);
+                    return (
+                      <label key={permission} style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', fontSize: 13 }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          disabled={savingRole === role}
+                          onChange={() => togglePermission(role, permission)}
+                          style={{ accentColor: roleColors[role] }}
+                        />
+                        <span style={{
+                          color: checked ? '#0f172a' : '#94a3b8',
+                          textDecoration: checked ? 'none' : 'line-through'
+                        }}>{permission}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {selectedUser && (
+        <div className="modal-backdrop" onClick={() => setSelectedUser(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()} style={{ maxWidth: 600 }}>
+            <div className="modal-header">
+              <div>
+                <h3>Permissions de {selectedUser.fullName}</h3>
+                <p className="small">Rôle : <strong style={{ color: roleColors[selectedUser.role] }}>{selectedUser.role}</strong></p>
+              </div>
+              <button className="btn btn-secondary btn-mini" onClick={() => setSelectedUser(null)}>Fermer</button>
+            </div>
+            <div style={{ padding: 16 }}>
+              <div style={{ marginBottom: 16 }}>
+                <label style={{ display: 'block', fontWeight: 600, marginBottom: 8 }}>Modifier le rôle</label>
+                <select
+                  value={selectedUser.role}
+                  disabled={savingId === selectedUser.id}
+                  onChange={(event) => changeRole(selectedUser.id, event.target.value as UserRole)}
+                  style={{ width: '100%', padding: 10, borderRadius: 6, border: '1px solid var(--border)' }}
+                >
+                  {USER_ROLES.map((role) => <option key={role} value={role}>{role}</option>)}
+                </select>
+                <p className="small" style={{ marginTop: 8, color: 'var(--muted)' }}>
+                  Les permissions sont automatiquement mises à jour selon le rôle sélectionné.
+                </p>
+              </div>
+              <div>
+                <h4 style={{ marginBottom: 8 }}>Permissions accordées ({(rolePerms[selectedUser.role] || []).length})</h4>
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {(rolePerms[selectedUser.role] || []).map((permission: Permission) => (
+                    <span key={permission} className="permission-pill" style={{ background: roleColors[selectedUser.role], color: '#fff' }}>
+                      {permission}
+                    </span>
+                  ))}
+                </div>
+                <p className="small" style={{ marginTop: 12, color: 'var(--muted)' }}>
+                  Pour modifier les permissions de ce rôle, utilisez la matrice ci-dessous.
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
